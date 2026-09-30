@@ -1,10 +1,10 @@
 // RapidAPI 版の NAVITIME Route(car) で、設計書 §12.1 の項目が使えるかを確かめる。
-// 実行: node --env-file=.env.local scripts/check-route-car.mjs
+// 実行: node --env-file=.env scripts/check-route-car.mjs
 // 2回呼ぶので、無料枠（月500アクセス）を2回分使う。APIキーは表示しない。
 
 const key = process.env.RAPIDAPI_KEY;
 if (!key) {
-  console.error(".env.local に RAPIDAPI_KEY がありません");
+  console.error(".env に RAPIDAPI_KEY がありません");
   process.exit(1);
 }
 

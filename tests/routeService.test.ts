@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Leg } from '../app/types/plan'
+import type { Leg, Stop } from '../app/types/plan'
 import { buildLegs } from '../app/utils/legs'
-import { searchRoute } from '../app/services/route'
+import { searchOptimalOrder, searchRoute } from '../app/services/route'
 import { FakeStorage, formOf } from './helpers'
 
 // サーバー側の中継を呼ぶ部分だけを差し替えて、何回呼んだかを数える
@@ -87,5 +87,45 @@ describe('ルート検索の呼び出し回数', () => {
     await expect(searchRoute(outbound)).rejects.toThrow('通信に失敗しました')
     await expect(searchRoute(outbound)).resolves.toMatchObject({ driveMinutes: 159 })
     expect(callApi).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('寄る順番を最適にした検索（仕様書にない追加）', () => {
+  const A: Stop = { place: { name: 'A', lat: 37.5, lon: 138.9 }, kind: 'other', stayMinutes: 30 }
+  const B: Stop = { place: { name: 'B', lat: 37.0, lon: 138.4 }, kind: 'meal', stayMinutes: 60 }
+  const point = (s: Stop) => ({ type: 'point', name: '経由地', coord: { lat: s.place.lat, lon: s.place.lon }, with_via: true })
+  const move = (from: string, to: string) => ({ type: 'move', from_time: `2026-10-10T${from}:00+09:00`, to_time: `2026-10-10T${to}:00+09:00` })
+  // 最適順の応答。B → A の順で入れたのを、A → B の順で寄る
+  const optimalItem = {
+    ...item,
+    sections: [move('08:00', '09:00'), point(A), move('09:30', '10:00'), point(B), move('11:00', '12:00')],
+  }
+
+  it('E21: 最適順を指定して1回だけ呼び、並べ替えた立ち寄り先と、その順番での時刻を返す', async () => {
+    callApi.mockResolvedValue({ item: optimalItem })
+    const [leg] = buildLegs(formOf({ stops: { outbound: [B, A] } }))
+    const { stops, result } = await searchOptimalOrder(leg!)
+    expect(callApi.mock.calls[0]![2].via_type).toBe('optimal')
+    expect(stops).toEqual([A, B])
+    expect(result.stopVisits).toEqual([
+      { arriveAt: '2026-10-10T09:00:00', departAt: '2026-10-10T09:30:00' },
+      { arriveAt: '2026-10-10T10:00:00', departAt: '2026-10-10T11:00:00' },
+    ])
+  })
+
+  it('E21: 並べ替えた順番の計算し直し・元の順に戻したときの計算し直しでは、呼ばない', async () => {
+    const [leg] = buildLegs(formOf({ stops: { outbound: [B, A] } }))
+    await searchRoute(leg!) // 元の順での結果
+    callApi.mockResolvedValue({ item: optimalItem })
+    const { stops, result } = await searchOptimalOrder(leg!)
+    await expect(searchRoute({ ...leg!, stops })).resolves.toEqual(result)
+    await searchRoute(leg!)
+    expect(callApi).toHaveBeenCalledTimes(2)
+  })
+
+  it('F28: 応答の立ち寄り先が対応づけられなければ、失敗として返す', async () => {
+    callApi.mockResolvedValue({ item: { ...optimalItem, sections: [move('08:00', '09:00'), point(A), move('09:30', '12:00')] } })
+    const [leg] = buildLegs(formOf({ stops: { outbound: [B, A] } }))
+    await expect(searchOptimalOrder(leg!)).rejects.toThrow('並べ替えた結果を読み取れませんでした')
   })
 })

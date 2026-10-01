@@ -104,6 +104,33 @@ export function buildLegs(form: PlanForm): Leg[] {
   ]
 }
 
+// 寄る順番の最適化（仕様書にない追加）。NAVITIME の最適順は、経由地10か所・滞在の合計300分まで
+export const MAX_OPTIMAL_STOPS = 10
+export const MAX_OPTIMAL_STAY_MINUTES = 300
+
+// 「寄る順番を最適にする」を押せない理由。押せるときは空
+export function optimizeBlocker(stops: Stop[]): string {
+  if (stops.length < 2) return '立ち寄り先が2か所以上あると使えます'
+  if (stops.length > MAX_OPTIMAL_STOPS) return `立ち寄り先が${MAX_OPTIMAL_STOPS}か所までのときに使えます`
+  const stay = stops.reduce((sum, s) => sum + s.stayMinutes, 0)
+  if (stay > MAX_OPTIMAL_STAY_MINUTES) return `滞在時間の合計が${MAX_OPTIMAL_STAY_MINUTES}分までのときに使えます（今は${stay}分）`
+  return ''
+}
+
+// 最適順の応答に入っていた経由地の座標（寄る順）を、元の立ち寄り先に対応づけて並べ替える。
+// 応答には渡した座標がそのまま入る（2026-10-01 確認）。対応づけられなければ null
+export function reorderStops(stops: Stop[], visited: { lat: number; lon: number }[]): Stop[] | null {
+  if (visited.length !== stops.length) return null
+  const rest = [...stops]
+  const ordered: Stop[] = []
+  for (const point of visited) {
+    const index = rest.findIndex((s) => Math.abs(s.place.lat - point.lat) < 1e-5 && Math.abs(s.place.lon - point.lon) < 1e-5)
+    if (index < 0) return null
+    ordered.push(rest.splice(index, 1)[0]!)
+  }
+  return ordered
+}
+
 // 区間の計算に使う条件を1つの文字列にする。計算結果がどの条件のものかを見分けるのに使う
 export function legInputHash(leg: Leg): string {
   const stops = leg.stops.map((s) => `${s.place.lat},${s.place.lon},${s.stayMinutes}${s.tollRoad ? ',toll' : ''}`).join(';')

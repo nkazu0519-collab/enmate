@@ -21,13 +21,23 @@ function stubDate(matchDate: string): string {
 <template>
   <div class="top">
     <section class="hero">
-      <div class="beam beam-left" aria-hidden="true" />
-      <div class="beam beam-right" aria-hidden="true" />
-      <div class="lamp lamp-left" aria-hidden="true" />
-      <div class="lamp lamp-right" aria-hidden="true" />
+      <!-- 夜の高速を走り、地平線の先に会場の照明が光る（試合にもライブにも合うよう、会場は形をぼかす） -->
+      <div class="scene" aria-hidden="true">
+        <div class="stars" />
+        <div class="glow" />
+        <svg class="venue" viewBox="0 0 400 40" preserveAspectRatio="xMidYMax meet">
+          <path d="M168 40 L172 26 Q200 18 228 26 L232 40 Z" fill="#0b1029" />
+          <g fill="#0b1029"><rect x="160" y="8" width="2" height="32" /><rect x="238" y="8" width="2" height="32" /></g>
+          <g fill="#fffbe0"><rect x="156" y="5" width="10" height="4" rx="1" /><rect x="234" y="5" width="10" height="4" rx="1" /></g>
+        </svg>
+        <svg class="ridge" viewBox="0 0 400 46" preserveAspectRatio="none">
+          <path d="M0 46 L0 30 L40 14 L80 28 L120 8 L150 24 L170 30 L230 30 L260 18 L300 4 L340 22 L370 12 L400 26 L400 46 Z" fill="#0b1229" />
+        </svg>
+        <div class="road"><div class="plane"><div class="dash" /></div></div>
+      </div>
       <div class="hero-copy">
-        <p class="eyebrow">AWAY DAYS</p>
-        <h1 class="hero-title">スタンドまで、<br><em>一本道。</em></h1>
+        <p class="eyebrow">ROAD TO THE VENUE</p>
+        <h1 class="hero-title">会場まで、<br><em>一本道。</em></h1>
         <p class="hero-lead">会場に着きたい時刻から、家を出る時刻を逆算。<br>帰り道まで、まとめて1枚に。</p>
         <NuxtLink to="/plans/new" class="cta">
           {{ loaded.length > 0 ? '＋ 遠征チケットを作る' : '＋ はじめての遠征チケットを作る' }}
@@ -126,69 +136,136 @@ function stubDate(matchDate: string): string {
   color: #e8ecff;
 }
 
-/* ===== ヒーロー（ナイター照明のスタジアム） ===== */
+/* ===== ヒーロー（夜の高速、その先に会場の光） ===== */
 .hero {
   position: relative;
   overflow: hidden;
-  padding: 0 16px 32px;
-  background:
-    radial-gradient(ellipse 120% 22% at 50% 100%, #1f6b3a 0 60%, transparent 62%),
-    linear-gradient(180deg, #050a1c, var(--night));
+  padding: 0 16px 270px;
+  background: linear-gradient(180deg, #03060f 0%, #0a1230 52%, #1b2150 66%, var(--night) 100%);
   text-align: center;
 }
 
-.beam {
+.scene {
   position: absolute;
-  top: -40px;
-  width: 340px;
-  height: 560px;
-  opacity: 0.35;
-  background: conic-gradient(from 160deg at 50% 0, transparent 0deg, #fffbe0 10deg, transparent 22deg);
-  transform-origin: 50% 0;
-  animation: sway 5s ease-in-out infinite alternate;
+  inset: 0;
+  pointer-events: none;
 }
 
-.beam-left {
-  left: -120px;
+.stars {
+  position: absolute;
+  inset: 0 0 45% 0;
+  opacity: 0.8;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, #fff, transparent),
+    radial-gradient(1px 1px at 28% 8%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 44% 22%, #fff, transparent),
+    radial-gradient(1px 1px at 63% 12%, #fff, transparent),
+    radial-gradient(1px 1px at 78% 26%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 90% 9%, #fff, transparent),
+    radial-gradient(1px 1px at 8% 40%, #fff, transparent),
+    radial-gradient(1px 1px at 55% 38%, #fff, transparent),
+    radial-gradient(1px 1px at 86% 44%, #fff, transparent),
+    radial-gradient(1px 1px at 35% 46%, #fff, transparent),
+    radial-gradient(1px 1px at 70% 3%, #fff, transparent),
+    radial-gradient(1px 1px at 20% 30%, #fff, transparent);
 }
 
-.beam-right {
-  right: -120px;
-  transform: scaleX(-1);
-  animation-delay: -2.5s;
+/* 地平線の先の、会場の照明 */
+.glow {
+  position: absolute;
+  left: 50%;
+  bottom: 168px;
+  width: 420px;
+  height: 200px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse 50% 60% at 50% 100%, rgba(255, 236, 170, 0.75), rgba(255, 200, 120, 0.25) 45%, transparent 70%);
+  animation: pulse 4s ease-in-out infinite alternate;
 }
 
-@keyframes sway {
+@keyframes pulse {
   from {
-    rotate: -6deg;
+    opacity: 0.75;
   }
   to {
-    rotate: 6deg;
+    opacity: 1;
   }
 }
 
-.lamp {
+.venue,
+.ridge {
   position: absolute;
-  top: 20px;
-  width: 70px;
-  height: 18px;
-  border-radius: 4px;
-  background: repeating-linear-gradient(90deg, #fffbe0 0 8px, #b9b28a 8px 10px);
-  box-shadow: 0 0 30px 10px rgba(255, 251, 224, 0.5);
+  left: 0;
+  width: 100%;
 }
 
-.lamp-left {
-  left: 14%;
+.venue {
+  bottom: 178px;
+  height: 40px;
 }
 
-.lamp-right {
-  right: 14%;
+.ridge {
+  bottom: 176px;
+  height: 46px;
+}
+
+/* 奥へ伸びる道。中央線を流して、走っている感じを出す */
+.road {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 180px;
+  overflow: hidden;
+  perspective: 140px;
+  perspective-origin: 50% 0;
+}
+
+.plane {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 200px;
+  height: 520px;
+  margin-left: -100px;
+  transform: rotateX(72deg);
+  transform-origin: 50% 100%;
+  background:
+    linear-gradient(90deg, transparent 0 8px, #d9dcec 8px 12px, transparent 12px calc(100% - 12px), #d9dcec calc(100% - 12px) calc(100% - 8px), transparent calc(100% - 8px)),
+    #1c2140;
+}
+
+.dash {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 6px;
+  margin-left: -3px;
+  background: repeating-linear-gradient(180deg, #ffe08a 0 34px, transparent 34px 80px);
+  animation: drive 0.9s linear infinite;
+}
+
+@keyframes drive {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 80px;
+  }
+}
+
+/* 地平線と、下のチケットとのつなぎ目をなじませる */
+.road::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #1b2150 0%, transparent 30%, transparent 62%, var(--night) 100%);
 }
 
 .hero-copy {
   position: relative;
   z-index: 1;
-  padding-top: 72px;
+  padding-top: 56px;
 }
 
 .eyebrow {
@@ -207,6 +284,7 @@ function stubDate(matchDate: string): string {
   font-weight: 400;
   font-size: clamp(1.8rem, 6.5vw, 2.6rem);
   line-height: 1.3;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
 }
 
 .hero-title em {
@@ -596,7 +674,8 @@ function stubDate(matchDate: string): string {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .beam,
+  .glow,
+  .dash,
   .pile i,
   .chev {
     animation: none;

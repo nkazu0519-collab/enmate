@@ -61,6 +61,11 @@ function stopVisitsOf(sections: RouteSection[]): StopVisit[] {
   return visits
 }
 
+// 立ち寄り先の地点の座標を、寄る順に取り出す（最適順で並べ替えた結果を読むのに使う）
+export function visitedCoordsOf(item: RouteItem): { lat: number; lon: number }[] {
+  return item.sections.flatMap((s) => (s.type === 'point' && s.with_via && s.coord ? [s.coord] : []))
+}
+
 function shapeOf(item: RouteItem): [number, number][] {
   const points: [number, number][] = []
   for (const feature of item.shapes?.features ?? []) {

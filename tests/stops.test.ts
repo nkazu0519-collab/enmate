@@ -6,8 +6,12 @@ import {
   kindFromCategory,
   legInputHash,
   legStatus,
+  MAX_OPTIMAL_STAY_MINUTES,
+  MAX_OPTIMAL_STOPS,
   MAX_STAY_MINUTES,
   MAX_STOPS,
+  optimizeBlocker,
+  reorderStops,
   stopFromPlace,
   validateForm,
 } from '../app/utils/legs'
@@ -113,5 +117,40 @@ describe('試合の終了時刻の初期値（仕様書 §4.2）', () => {
 
   it('4時間後が日付をまたぐなら 23:30', () => {
     expect(defaultMatchEnd('20:00', '17:00')).toBe('23:30')
+  })
+})
+
+describe('寄る順番の最適化（仕様書にない追加。設計書 §5.3）', () => {
+  const NAGAOKA: Stop = { place: { name: '長岡', lat: 37.4467, lon: 138.8513 }, kind: 'other', stayMinutes: 30 }
+  const at = (stop: Stop) => ({ lat: stop.place.lat, lon: stop.place.lon })
+
+  it('E21: 立ち寄り先が2か所以上で、上限の中なら押せる', () => {
+    expect(optimizeBlocker([TAKADA])).not.toBe('')
+    expect(optimizeBlocker([TAKADA, LUNCH])).toBe('')
+  })
+
+  it(`F27: 立ち寄り先が${MAX_OPTIMAL_STOPS}か所を超えると押せず、理由を出す`, () => {
+    const many = Array.from({ length: MAX_OPTIMAL_STOPS + 1 }, (_, i) => ({ ...NAGAOKA, stayMinutes: 0, place: { ...NAGAOKA.place, lat: 37 + i / 100 } }))
+    expect(optimizeBlocker(many.slice(0, MAX_OPTIMAL_STOPS))).toBe('')
+    expect(optimizeBlocker(many)).toContain(`${MAX_OPTIMAL_STOPS}か所まで`)
+  })
+
+  it(`F27: 滞在時間の合計が${MAX_OPTIMAL_STAY_MINUTES}分を超えると押せず、今の合計を出す`, () => {
+    const stay = (m: number) => ({ ...TAKADA, stayMinutes: m })
+    expect(optimizeBlocker([stay(150), stay(150)])).toBe('')
+    expect(optimizeBlocker([stay(150), stay(160)])).toContain('今は310分')
+  })
+
+  it('E21: 応答の寄る順の座標に合わせて、元の立ち寄り先（種類・滞在時間つき）を並べ替える', () => {
+    expect(reorderStops([LUNCH, NAGAOKA, TAKADA], [at(NAGAOKA), at(TAKADA), at(LUNCH)])).toEqual([NAGAOKA, TAKADA, LUNCH])
+  })
+
+  it('F28: 同じ場所を2回入れていても、取りこぼさない', () => {
+    expect(reorderStops([TAKADA, LUNCH, TAKADA], [at(TAKADA), at(TAKADA), at(LUNCH)])).toEqual([TAKADA, TAKADA, LUNCH])
+  })
+
+  it('F28: 応答の地点の数や座標が合わなければ、並べ替えない（null）', () => {
+    expect(reorderStops([TAKADA, LUNCH], [at(TAKADA)])).toBeNull()
+    expect(reorderStops([TAKADA, LUNCH], [at(TAKADA), at(NAGAOKA)])).toBeNull()
   })
 })

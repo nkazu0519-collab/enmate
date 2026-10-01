@@ -5,6 +5,9 @@ const COORD = /^-?\d{1,3}(\.\d+)?,-?\d{1,3}(\.\d+)?$/
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/
 const MAX_VIA = 50
 const MAX_STAY = 720
+// 寄る順番を最適にするとき（via_type=optimal）は、経由地10か所・滞在の合計300分まで（NAVITIME の仕様）
+const MAX_OPTIMAL_VIA = 10
+const MAX_OPTIMAL_STAY = 300
 
 // 経由地（立ち寄り先）を確かめて、決まった形に組み直す。正しくなければ null
 function parseVia(raw: string): string | null {
@@ -28,6 +31,14 @@ function parseVia(raw: string): string | null {
   return JSON.stringify(via)
 }
 
+// 最適順は、経由地があり、上限の中のときだけ通す
+function optimalOk(viaType: string, via: string): boolean {
+  if (viaType === '') return true
+  if (viaType !== 'optimal' || via === '') return false
+  const list = JSON.parse(via) as { 'stay-time': number }[]
+  return list.length <= MAX_OPTIMAL_VIA && list.reduce((sum, v) => sum + v['stay-time'], 0) <= MAX_OPTIMAL_STAY
+}
+
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const start = String(query.start ?? '')
@@ -36,10 +47,11 @@ export default defineEventHandler(async (event) => {
   const startTime = String(query.start_time ?? '')
   const viaRaw = String(query.via ?? '')
   const via = viaRaw === '' ? '' : parseVia(viaRaw)
+  const viaType = String(query.via_type ?? '')
 
   // 到着時刻と出発時刻は、どちらか片方だけを指定する（NAVITIME の仕様）
   const timeOk = TIME.test(goalTime) !== TIME.test(startTime) && (goalTime === '' || startTime === '')
-  if (!COORD.test(start) || !COORD.test(goal) || !timeOk || via === null) {
+  if (!COORD.test(start) || !COORD.test(goal) || !timeOk || via === null || !optimalOk(viaType, via)) {
     throw createError({ statusCode: 400, message: 'badRequest', data: { kind: 'badRequest' } })
   }
 
@@ -48,6 +60,7 @@ export default defineEventHandler(async (event) => {
     goal,
     ...(goalTime ? { goal_time: goalTime } : { start_time: startTime }),
     ...(via ? { via } : {}),
+    ...(viaType ? { via_type: viaType } : {}),
     shape: 'true', // ルートの線の形も一緒に受け取る
     options: 'turn_by_turn',
     divide_with: 'sa.pa', // SA/PA を通る時刻を受け取る

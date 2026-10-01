@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // プランの作成・編集の画面（仕様書 §4.2）。initial を渡すと編集になる。
 // 段階0「おおまかなプラン」→ 段階1「行きを決める」→ 段階2「帰りを決める」→ 遠征のまとめと保存。編集は段階2から始める
-import { searchRoute } from '~/services/route'
+import { searchOptimalOrder, searchRoute } from '~/services/route'
 import type { MapPoint, MapRoute } from '~/types/map'
 import type { Leg, LegResult, Plan, PlanForm, Stop } from '~/types/plan'
 import { formatDuration, formatYen, nextSaturday, timeFromDate, timePart, todayLocal } from '~/utils/datetime'
@@ -13,6 +13,7 @@ import {
   legInputHash,
   legStatus,
   MAX_EXIT_MINUTES,
+  optimizeBlocker,
   REST_INTERVAL_OPTIONS,
   STOP_KIND_ICONS,
   validateForm,
@@ -162,6 +163,59 @@ function addRest(legId: string, index: number) {
     tollRoad: true,
   }
   form.stops[legId] = [...stops.slice(0, position), rest, ...stops.slice(position)]
+}
+
+// 寄る順番を最適にする（仕様書にない追加。設計書 §5.3）。1回だけ検索し、並べ替えた順番での結果として使う。
+// 並べ替える前の順番と計算結果を覚えておき、並べ替えたままの間だけ「元の順に戻す」を出す
+const reorders = ref<Record<string, { before: Stop[]; after: Stop[]; beforeResult?: LegResult }>>({})
+const optimizeNotes = ref<Record<string, string>>({})
+const sameStops = (a: Stop[], b: Stop[]) => JSON.stringify(a) === JSON.stringify(b)
+
+function blockerOf(legId: string): string {
+  const stops = form.stops[legId] ?? []
+  return stopErrorsOf(legId)[0] ?? optimizeBlocker(stops)
+}
+
+function canRevert(legId: string): boolean {
+  const reorder = reorders.value[legId]
+  return !!reorder && sameStops(form.stops[legId] ?? [], reorder.after)
+}
+
+async function optimize(legId: string) {
+  const leg = legOf(legId)
+  if (!leg || calculatingLegs.value[legId] || blockerOf(legId) !== '') return
+  clearTimeout(stopTimers[legId])
+  calculatingLegs.value[legId] = true
+  delete optimizeNotes.value[legId]
+  const before = leg.stops
+  const beforeResult = results.value[legId]
+  try {
+    const { stops, result } = await searchOptimalOrder(leg)
+    // 検索している間に立ち寄り先を変えていたら、その変更を残す（並べ替えない）
+    if (!sameStops(form.stops[legId] ?? [], before)) return
+    results.value[legId] = result
+    if (sameStops(stops, before)) {
+      optimizeNotes.value[legId] = '今の順番が最適でした。'
+      return
+    }
+    reorders.value[legId] = { before, after: stops, beforeResult }
+    optimizeNotes.value[legId] = '移動が短くなる順番に並べ替えました。'
+    form.stops[legId] = stops
+  } catch (e) {
+    optimizeNotes.value[legId] = e instanceof Error ? e.message : '寄る順番を最適にできませんでした。'
+  } finally {
+    calculatingLegs.value[legId] = false
+  }
+}
+
+// 元の順に戻す。並べ替える前の結果を戻すので、計算し直しでも呼ばない（前の結果が今の条件のものなら）
+function revertOrder(legId: string) {
+  const reorder = reorders.value[legId]
+  if (!reorder || !canRevert(legId)) return
+  if (reorder.beforeResult) results.value[legId] = reorder.beforeResult
+  form.stops[legId] = reorder.before
+  delete reorders.value[legId]
+  delete optimizeNotes.value[legId]
 }
 
 // 立ち寄り先を追加する画面
@@ -381,6 +435,11 @@ function onRestClick(id: string) {
             @open-add="pickerLeg = 'outbound'"
             @add-rest="addRest('outbound', $event)"
             @recalculate="calculate('outbound')"
+            :optimize-blocker="blockerOf('outbound')"
+            :optimize-note="optimizeNotes.outbound"
+            :can-revert-order="canRevert('outbound')"
+            @optimize="optimize('outbound')"
+            @revert-order="revertOrder('outbound')"
           >
             <template #time-input>
               <label class="field">
@@ -429,6 +488,11 @@ function onRestClick(id: string) {
             @open-add="pickerLeg = 'return'"
             @add-rest="addRest('return', $event)"
             @recalculate="calculate('return')"
+            :optimize-blocker="blockerOf('return')"
+            :optimize-note="optimizeNotes.return"
+            :can-revert-order="canRevert('return')"
+            @optimize="optimize('return')"
+            @revert-order="revertOrder('return')"
           >
             <template #time-input>
               <div class="row">

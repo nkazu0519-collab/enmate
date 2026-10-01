@@ -1,8 +1,8 @@
 // ルート検索。今の中身は NAVITIME ルート検索（車）。
-import type { Leg, LegResult } from '~/types/plan'
+import type { Leg, LegResult, Stop } from '~/types/plan'
 import { readCache, writeCache } from '~/utils/apiCache'
-import { legInputHash } from '~/utils/legs'
-import { parseRouteItem, type RouteItem } from '~/utils/routeResult'
+import { legInputHash, reorderStops } from '~/utils/legs'
+import { parseRouteItem, visitedCoordsOf, type RouteItem } from '~/utils/routeResult'
 import { callApi } from './api'
 
 const CACHE_MS = 24 * 60 * 60 * 1000 // 1日
@@ -10,8 +10,8 @@ const CACHE_MS = 24 * 60 * 60 * 1000 // 1日
 // 同じ条件の検索が進んでいる間にもう一度呼ばれたら、同じ検索の結果を待つ（二重に呼ばない）
 const running = new Map<string, Promise<LegResult>>()
 
-async function fetchRoute(leg: Leg, hash: string): Promise<LegResult> {
-  const { item } = await callApi<{ item: RouteItem }>('route', '/api/route', {
+function routeQuery(leg: Leg): Record<string, string> {
+  return {
     start: `${leg.from.lat},${leg.from.lon}`,
     goal: `${leg.to.lat},${leg.to.lon}`,
     ...(leg.timeRule === 'arriveBy' ? { goal_time: leg.time } : { start_time: leg.time }),
@@ -29,7 +29,11 @@ async function fetchRoute(leg: Leg, hash: string): Promise<LegResult> {
           ),
         }
       : {}),
-  })
+  }
+}
+
+async function fetchRoute(leg: Leg, hash: string): Promise<LegResult> {
+  const { item } = await callApi<{ item: RouteItem }>('route', '/api/route', routeQuery(leg))
   const result = parseRouteItem(item, hash, new Date().toISOString())
   writeCache(`route:${hash}`, result)
   return result
@@ -46,4 +50,16 @@ export function searchRoute(leg: Leg): Promise<LegResult> {
     running.set(hash, promise)
   }
   return promise
+}
+
+// 寄る順番を最適にした検索（仕様書にない追加）。1回だけ呼び、並べ替えた立ち寄り先と、その順番での計算結果を返す。
+// 結果は並べ替えた順番の条件として保存するので、そのあとの計算し直しでは呼ばない
+export async function searchOptimalOrder(leg: Leg): Promise<{ stops: Stop[]; result: LegResult }> {
+  const { item } = await callApi<{ item: RouteItem }>('route', '/api/route', { ...routeQuery(leg), via_type: 'optimal' })
+  const stops = reorderStops(leg.stops, visitedCoordsOf(item))
+  if (!stops) throw new Error('並べ替えた結果を読み取れませんでした。今の順番のままお使いください。')
+  const hash = legInputHash({ ...leg, stops })
+  const result = parseRouteItem(item, hash, new Date().toISOString())
+  writeCache(`route:${hash}`, result)
+  return { stops, result }
 }

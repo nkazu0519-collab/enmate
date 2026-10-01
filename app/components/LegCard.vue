@@ -15,9 +15,12 @@ const props = defineProps<{
   error?: string
   suggestions: RestSuggestion[]
   longStretches: LongStretch[]
+  optimizeBlocker: string // 「寄る順番を最適にする」を押せない理由
+  optimizeNote?: string // 最適にした結果のお知らせ
+  canRevertOrder?: boolean
 }>()
 const stops = defineModel<Stop[]>('stops', { required: true })
-const emit = defineEmits<{ 'open-add': []; 'add-rest': [index: number]; recalculate: [] }>()
+const emit = defineEmits<{ 'open-add': []; 'add-rest': [index: number]; recalculate: []; optimize: []; 'revert-order': [] }>()
 
 const KINDS = Object.keys(STOP_KIND_LABELS) as StopKind[]
 const calculated = computed(() => props.status === 'calculated')
@@ -124,6 +127,17 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
           </div>
         </li>
       </ol>
+      <!-- 寄る順番の最適化（仕様書にない追加。設計書 §5.3） -->
+      <div v-if="stops.length >= 2" class="optimize">
+        <button type="button" class="btn btn-small" :disabled="props.loading || props.optimizeBlocker !== ''" @click="emit('optimize')">
+          寄る順番を最適にする（提案）
+        </button>
+        <button v-if="props.canRevertOrder" type="button" class="btn btn-small" :disabled="props.loading" @click="emit('revert-order')">
+          元の順に戻す
+        </button>
+        <span v-if="props.optimizeBlocker" class="muted">{{ props.optimizeBlocker }}</span>
+        <span v-else-if="props.optimizeNote" class="muted" role="status">{{ props.optimizeNote }}</span>
+      </div>
       <button type="button" class="btn btn-block" @click="emit('open-add')">＋立ち寄り先を追加</button>
     </section>
 
@@ -342,6 +356,15 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
 .stop-moves .btn {
   min-width: 36px;
   padding: 4px 8px;
+}
+
+.optimize {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
 }
 
 .rests {

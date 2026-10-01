@@ -34,7 +34,10 @@ async function loadStyle(): Promise<StyleSpecification | null> {
   try {
     const style = (await $fetch<StyleSpecification>(STYLE_URL, { retry: 0, timeout: 10_000 })) as StyleSpecification
     for (const layer of style.layers) {
-      if (layer.type === 'symbol' && layer.layout?.['text-field']) layer.layout['text-field'] = ['coalesce', ['get', 'name:ja'], ['get', 'name']]
+      // 名前を出す設定だけを置き換える。道路番号の標識（「18」などの番号を出す設定）まで置き換えると、
+      // 番号用の小さな四角に道路名が入って崩れる（2026-10-02 本人の指摘）
+      if (layer.type !== 'symbol' || !layer.layout?.['text-field']) continue
+      if (JSON.stringify(layer.layout['text-field']).includes('name:latin')) layer.layout['text-field'] = ['coalesce', ['get', 'name:ja'], ['get', 'name']]
     }
     return style
   } catch {

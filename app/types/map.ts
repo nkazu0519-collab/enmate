@@ -12,4 +12,7 @@ export type MapPoint = {
   kind: 'home' | 'venue' | 'stop' | 'rest'
   place: Place
   icon?: string // 決まった絵の代わりに使う絵文字
+  label?: string // 立ち寄り先の番号、休憩候補の「休1」など
+  id?: string // 休憩候補を押したときに、どの候補かを返すのに使う
+  note?: string // 休憩候補の吹き出しに出す「休憩候補（SA）・12:30頃」
 }

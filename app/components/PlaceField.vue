@@ -1,14 +1,21 @@
 <script setup lang="ts">
-// 場所を名前で検索して1つ選ぶ欄。検索するのは「検索」を押した時だけ（入力中には呼ばない）
+// 場所を名前で検索して1つ選ぶ欄（仕様書 §4.9）。検索するのは「検索」を押した時だけ（入力中には呼ばない。設計書 §3.2）
 import { searchPlaces } from '~/services/place'
 import type { Place } from '~/types/plan'
 
-const props = defineProps<{ label: string; placeholder: string }>()
+const props = defineProps<{ label: string; placeholder: string; venueOnly?: boolean }>()
 const selected = defineModel<Place | null>({ required: true })
 
+const FIRST_COUNT = 5
+// 会場の候補は、スタジアム・球場・アリーナ・ホール・劇場・ライブハウス・競馬場などの施設に絞る（種類のないスポットは残す）
+const VENUE_CODES = ['0102013', '0102015', '0106003', '0106004', '0106009', '0107001']
+const isVenue = (place: Place) => !place.categoryCode || VENUE_CODES.some((code) => place.categoryCode!.startsWith(code))
+
 const word = ref('')
+const searched = ref('')
 const searching = ref(false)
 const results = ref<Place[] | null>(null)
+const showAll = ref(false)
 const error = ref('')
 
 async function search() {
@@ -17,8 +24,11 @@ async function search() {
   searching.value = true
   error.value = ''
   results.value = null
+  showAll.value = false
   try {
-    results.value = await searchPlaces(query)
+    const places = await searchPlaces(query)
+    results.value = props.venueOnly ? places.filter(isVenue) : places
+    searched.value = query
   } catch (e) {
     error.value = e instanceof Error ? e.message : '検索に失敗しました。もう一度押してください。'
   } finally {
@@ -26,15 +36,16 @@ async function search() {
   }
 }
 
+const shown = computed(() => (results.value && !showAll.value ? results.value.slice(0, FIRST_COUNT) : (results.value ?? [])))
+const isSelected = (place: Place) => selected.value?.lat === place.lat && selected.value?.lon === place.lon
+
 function choose(place: Place) {
   selected.value = place
   results.value = null
   word.value = ''
 }
 
-function clear() {
-  selected.value = null
-}
+const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeURIComponent(code)}`
 </script>
 
 <template>
@@ -43,37 +54,49 @@ function clear() {
 
     <div v-if="selected" class="selected">
       <div>
-        <p class="selected-name">✓ {{ selected.name }}</p>
-        <p class="muted">{{ [selected.category, selected.address].filter(Boolean).join('・') }}</p>
+        <p class="selected-name">{{ selected.name }}</p>
+        <p class="muted">✓ 設定済み<template v-if="selected.address">・{{ selected.address }}</template></p>
       </div>
-      <button type="button" class="btn btn-small" @click="clear">変える</button>
     </div>
 
-    <template v-else>
-      <form class="search-row" @submit.prevent="search">
-        <input v-model="word" class="input" type="search" :placeholder="props.placeholder" :aria-label="`${props.label}の名前`" maxlength="50" />
-        <button type="submit" class="btn" :disabled="searching || word.trim() === ''">
-          {{ searching ? '検索中…' : '検索' }}
-        </button>
-      </form>
+    <form class="search-row" @submit.prevent="search">
+      <input v-model="word" class="input" type="search" :placeholder="selected ? '別の場所を検索' : props.placeholder" :aria-label="`${props.label}の名前`" maxlength="50" />
+      <button type="submit" class="btn" :disabled="searching || word.trim() === ''">
+        {{ searching ? '検索中…' : '検索' }}
+      </button>
+    </form>
 
-      <p v-if="error" class="notice notice-error" role="alert">{{ error }}</p>
-      <p v-else-if="results && results.length === 0" class="notice notice-warn">
-        見つかりませんでした。名前を変えて、もう一度検索してください。
-      </p>
-      <ul v-else-if="results" class="results">
-        <li v-for="place in results" :key="place.spotCode ?? `${place.lat},${place.lon}`">
-          <button type="button" class="result" @click="choose(place)">
-            <span class="result-name">{{ place.name }}</span>
-            <span class="muted">{{ [place.category, place.address].filter(Boolean).join('・') }}</span>
-          </button>
+    <p v-if="error" class="notice notice-error" role="alert">{{ error }}</p>
+    <p v-else-if="results && results.length === 0" class="notice notice-warn">見つかりませんでした。</p>
+    <div v-else-if="results" class="results-box">
+      <div class="results-head">
+        <p class="results-title">{{ props.label }}を選ぶ</p>
+        <button type="button" class="btn btn-small" @click="results = null">✕ 閉じる</button>
+      </div>
+      <p class="muted">「{{ searched }}」の検索結果（{{ results.length }}件）です</p>
+      <ul class="results">
+        <li v-for="place in shown" :key="place.spotCode ?? `${place.lat},${place.lon}`" class="result">
+          <div class="result-body">
+            <p class="result-name">{{ place.name }}</p>
+            <p class="muted">{{ [place.category, place.address].filter(Boolean).join('・') }}</p>
+            <a v-if="place.spotCode" class="result-link" :href="spotUrl(place.spotCode)" target="_blank" rel="noopener">NAVITIMEで詳しく見る↗</a>
+          </div>
+          <button v-if="isSelected(place)" type="button" class="btn btn-small" disabled>✓ {{ props.label }}に設定済み</button>
+          <button v-else type="button" class="btn btn-small btn-primary" @click="choose(place)">ここにする</button>
         </li>
       </ul>
-    </template>
+      <button v-if="results.length > FIRST_COUNT && !showAll" type="button" class="btn btn-block" @click="showAll = true">
+        もっと見る（あと{{ results.length - FIRST_COUNT }}件）
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.field > * + * {
+  margin-top: 8px;
+}
+
 .search-row {
   display: flex;
   gap: 8px;
@@ -84,10 +107,6 @@ function clear() {
 }
 
 .selected {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   padding: 10px 14px;
   border: 1px solid var(--color-primary);
   border-radius: 8px;
@@ -98,39 +117,60 @@ function clear() {
   font-weight: 600;
 }
 
-.notice {
-  margin-top: 8px;
+.results-box {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.results-box > * + * {
+  margin-top: 6px;
+}
+
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.results-title {
+  font-weight: 700;
 }
 
 .results {
-  list-style: none;
-  margin: 8px 0 0;
+  margin: 0;
   padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.results li + li {
-  border-top: 1px solid var(--color-border);
+  list-style: none;
 }
 
 .result {
   display: flex;
-  flex-direction: column;
-  width: 100%;
-  padding: 10px 14px;
-  border: 0;
-  background: #fff;
-  text-align: left;
-  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
 }
 
-.result:hover {
-  background: var(--color-primary-soft);
+.result + .result {
+  border-top: 1px solid var(--color-border);
+}
+
+.result-body {
+  min-width: 0;
 }
 
 .result-name {
   font-weight: 600;
+  line-height: 1.4;
+}
+
+.result-link {
+  font-size: 0.875rem;
+}
+
+.result .btn {
+  flex: none;
 }
 </style>

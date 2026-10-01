@@ -10,7 +10,7 @@ type SpotItem = {
   name?: string
   address_name?: string
   coord?: { lat: number; lon: number }
-  categories?: { name?: string }[]
+  categories?: { code?: string; name?: string }[]
   distance?: number // 周辺検索のときだけ返る、中心からの距離（メートル）
 }
 
@@ -28,6 +28,7 @@ function toPlace(item: SpotItemWithCoord): Place {
     spotCode: item.code,
     address: item.address_name,
     category: item.categories?.[0]?.name,
+    categoryCode: item.categories?.[0]?.code,
   }
 }
 

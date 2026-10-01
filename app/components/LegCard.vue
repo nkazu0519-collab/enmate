@@ -1,43 +1,66 @@
 <script setup lang="ts">
-// 区間（行き・帰り）1つ分の計算結果のカード
-import type { Leg, LegResult, RestArea } from '~/types/plan'
+// 作成・編集ページの区間のカード（仕様書 §4.6）。いちばん上に区間の時刻の入力欄（スロット）、
+// 出発・到着の時刻、概要、立ち寄り先の一覧（§4.5）、おすすめ休憩地（§4.8）を出す
+import type { Leg, LegResult, Stop, StopKind } from '~/types/plan'
 import { datePart, formatDateJa, formatDistance, formatDuration, formatYen, timePart } from '~/utils/datetime'
-import { MAX_STOPS, STOP_KIND_ICONS, STOP_KIND_LABELS, type LegStatus } from '~/utils/legs'
-import { suggestRests } from '~/utils/rest'
+import { MAX_STAY_MINUTES, STAY_STEP_MINUTES, STOP_KIND_ICONS, STOP_KIND_LABELS, type LegStatus } from '~/utils/legs'
+import type { LongStretch, RestSuggestion } from '~/utils/rest'
 
 const props = defineProps<{
+  number: number // 往復を通しての区間の番号
   leg: Leg
   result?: LegResult
   status: LegStatus
   loading?: boolean
   error?: string
-  restIntervalMinutes: number
-  canAddRest?: boolean // 作成・編集ページでだけ「休憩に入れる」を出す
+  suggestions: RestSuggestion[]
+  longStretches: LongStretch[]
 }>()
-const emit = defineEmits<{ 'add-rest': [area: RestArea] }>()
+const stops = defineModel<Stop[]>('stops', { required: true })
+const emit = defineEmits<{ 'open-add': []; 'add-rest': [index: number]; recalculate: [] }>()
 
-// 休憩の提案は、今の条件で計算した結果からだけ出す
-const advice = computed(() => (props.result && props.status === 'calculated' ? suggestRests(props.result, props.restIntervalMinutes) : null))
-const intervalText = computed(() => formatDuration(props.restIntervalMinutes))
+const KINDS = Object.keys(STOP_KIND_LABELS) as StopKind[]
+const calculated = computed(() => props.status === 'calculated')
+const visits = computed(() => (calculated.value ? (props.result?.stopVisits ?? []) : []))
 
-const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', stale: '未計算（条件が変わりました）', none: '未計算' }
+function update(index: number, patch: Partial<Stop>) {
+  stops.value = stops.value.map((stop, i) => (i === index ? { ...stop, ...patch } : stop))
+}
+
+function move(index: number, by: -1 | 1) {
+  const next = [...stops.value]
+  const [stop] = next.splice(index, 1)
+  next.splice(index + by, 0, stop!)
+  stops.value = next
+}
+
+function remove(index: number) {
+  stops.value = stops.value.filter((_, i) => i !== index)
+}
+
+const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeURIComponent(code)}`
 </script>
 
 <template>
   <section class="card leg" :class="[`leg-${props.leg.id}`, { 'leg-stale': props.status === 'stale' }]">
     <header class="leg-header">
       <h3 class="leg-title">
+        <span class="leg-number">{{ props.number }}</span>
         <span class="leg-label">{{ props.leg.label }}</span>
         {{ props.leg.from.name }} → {{ props.leg.to.name }}
       </h3>
-      <span class="status" :class="`status-${props.status}`">{{ props.loading ? '計算中…' : STATUS_LABELS[props.status] }}</span>
     </header>
 
+    <!-- 区間の時刻の入力欄（行きは着く時刻、帰りは出る時刻） -->
+    <div class="time-input"><slot name="time-input" /></div>
+
+    <p v-if="props.loading" class="muted">検索中…</p>
     <p v-if="props.error" class="notice notice-error" role="alert">{{ props.error }}</p>
 
     <template v-if="props.result">
-      <p v-if="props.status === 'stale'" class="notice notice-warn">
-        下の時刻は、前の条件で計算した結果です。「計算し直す」を押すと、今の条件で計算します。
+      <p v-if="props.status === 'stale' && !props.loading" class="notice notice-warn stale-note">
+        <span>下の時刻は、前の条件で計算した結果です。</span>
+        <button type="button" class="btn btn-small btn-primary" @click="emit('recalculate')">計算し直す</button>
       </p>
       <div class="times">
         <div class="time" :class="{ 'time-computed': props.leg.timeRule === 'arriveBy' }">
@@ -55,43 +78,83 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
         運転 {{ formatDuration(props.result.driveMinutes) }}・{{ formatDistance(props.result.distanceMeters) }}
         <template v-if="props.result.tollYen > 0">・高速 {{ formatYen(props.result.tollYen) }}</template>
       </p>
+    </template>
+    <p v-else-if="!props.error && !props.loading" class="muted">まだ計算していません。</p>
 
-      <ol v-if="props.leg.stops.length > 0" class="visits">
-        <li v-for="(stop, i) in props.leg.stops" :key="i" class="visit">
-          <span class="visit-icon" aria-hidden="true">{{ STOP_KIND_ICONS[stop.kind] }}</span>
-          <span class="visit-name">{{ stop.place.name }}<span class="muted">（{{ STOP_KIND_LABELS[stop.kind] }}・{{ stop.stayMinutes }}分）</span></span>
-          <span v-if="props.status === 'calculated' && props.result.stopVisits?.[i]" class="visit-time">
-            {{ timePart(props.result.stopVisits[i]!.arriveAt) }}〜{{ timePart(props.result.stopVisits[i]!.departAt) }}
-          </span>
+    <!-- 立ち寄り先（仕様書 §4.5） -->
+    <section class="stops">
+      <h4 class="sub-title">立ち寄り先</h4>
+      <ol v-if="stops.length > 0" class="stop-list">
+        <li v-for="(stop, i) in stops" :key="`${stop.place.lat},${stop.place.lon},${i}`" class="stop">
+          <div class="stop-head">
+            <span class="stop-number">{{ i + 1 }}</span>
+            <span class="stop-icon" aria-hidden="true">{{ STOP_KIND_ICONS[stop.kind] }}</span>
+            <span class="stop-name">
+              {{ stop.place.name }}
+              <a v-if="stop.place.spotCode" class="stop-link" :href="spotUrl(stop.place.spotCode)" target="_blank" rel="noopener">詳細↗</a>
+            </span>
+            <span v-if="visits[i]" class="stop-time">{{ timePart(visits[i]!.arriveAt) }} 着 → {{ timePart(visits[i]!.departAt) }} 発</span>
+          </div>
+          <div class="stop-controls">
+            <label>
+              <span class="sr-only">種類</span>
+              <select class="input input-auto" :value="stop.kind" @change="update(i, { kind: ($event.target as HTMLSelectElement).value as StopKind })">
+                <option v-for="kind in KINDS" :key="kind" :value="kind">{{ STOP_KIND_LABELS[kind] }}</option>
+              </select>
+            </label>
+            <label class="stay">
+              <span>滞在</span>
+              <input
+                class="input"
+                type="number"
+                min="0"
+                :max="MAX_STAY_MINUTES"
+                :step="STAY_STEP_MINUTES"
+                :value="stop.stayMinutes"
+                :aria-label="`${stop.place.name}の滞在時間（分）`"
+                @input="update(i, { stayMinutes: ($event.target as HTMLInputElement).valueAsNumber })"
+              />
+              <span>分</span>
+            </label>
+            <span class="stop-moves">
+              <button type="button" class="btn btn-small" :disabled="i === 0" :aria-label="`${stop.place.name}を前へ`" @click="move(i, -1)">↑</button>
+              <button type="button" class="btn btn-small" :disabled="i === stops.length - 1" :aria-label="`${stop.place.name}を後ろへ`" @click="move(i, 1)">↓</button>
+              <button type="button" class="btn btn-small btn-danger" :aria-label="`${stop.place.name}を削除`" @click="remove(i)">✕</button>
+            </span>
+          </div>
         </li>
       </ol>
+      <button type="button" class="btn btn-block" @click="emit('open-add')">＋立ち寄り先を追加</button>
+    </section>
 
-      <div v-if="advice && (advice.suggestions.length > 0 || advice.longStretches.length > 0)" class="rests">
-        <p class="rests-title">休憩の提案（{{ intervalText }}ごと）</p>
-        <ul v-if="advice.suggestions.length > 0" class="rest-list">
-          <li v-for="area in advice.suggestions" :key="`${area.name}${area.passAt}`" class="rest">
-            <span class="rest-time">{{ timePart(area.passAt) }}</span>
-            <span class="rest-name">{{ area.name }}</span>
-            <button
-              v-if="props.canAddRest"
-              type="button"
-              class="btn btn-small"
-              :disabled="props.leg.stops.length >= MAX_STOPS"
-              @click="emit('add-rest', area)"
-            >
-              休憩に入れる
-            </button>
+    <!-- おすすめ休憩地（仕様書 §4.8） -->
+    <details v-if="props.result && calculated" class="rests">
+      <summary>おすすめ休憩地（{{ props.suggestions.length }}件）</summary>
+      <p v-if="props.suggestions.length === 0 && props.longStretches.length === 0" class="muted">
+        休憩間隔内に到着できるため、休憩の提案はありません。
+      </p>
+      <ul v-if="props.suggestions.length > 0" class="rest-list">
+        <li v-for="(area, i) in props.suggestions" :key="`${area.name}${area.passAt}`" class="rest">
+          <span class="rest-mark">休{{ i + 1 }}</span>
+          <span class="rest-body">
+            <span class="rest-name">{{ area.name }}<span class="muted">（{{ area.kind }}）</span></span>
+            <span class="muted">{{ timePart(area.passAt) }}ごろ着・前の休憩から {{ formatDuration(area.drivenMinutes) }} 運転</span>
+          </span>
+          <button type="button" class="btn btn-small" :disabled="props.loading" @click="emit('add-rest', i)">ここで30分休憩する</button>
+        </li>
+      </ul>
+      <p v-for="stretch in props.longStretches" :key="stretch.from" class="notice notice-warn">
+        {{ timePart(stretch.from) }}〜{{ timePart(stretch.to) }} は、SA/PA で休めないまま {{ formatDuration(stretch.minutes) }} 運転が続きます。道の駅やコンビニで休憩を取ってください。
+      </p>
+      <details v-if="props.result.restAreas.length > 0" class="all-sapa">
+        <summary>ルート上のSA/PA（{{ props.result.restAreas.length }}件）をすべて見る</summary>
+        <ul class="sapa-list">
+          <li v-for="area in props.result.restAreas" :key="`${area.name}${area.passAt}`">
+            <span class="sapa-kind">{{ area.kind }}</span>{{ area.name }}<span class="muted">（{{ timePart(area.passAt) }}ごろ）</span>
           </li>
         </ul>
-        <p v-for="stretch in advice.longStretches" :key="stretch.from" class="notice notice-warn">
-          {{ timePart(stretch.from) }}〜{{ timePart(stretch.to) }} は、SA/PA で休めないまま {{ formatDuration(stretch.minutes) }} 運転が続きます。道の駅やコンビニで休憩を取ってください。
-        </p>
-        <p v-if="props.canAddRest && advice.suggestions.length > 0" class="muted">
-          「休憩に入れる」を押すと、15分の休憩として立ち寄り先に入ります。計算し直すと、休憩の時間も時刻に入ります。
-        </p>
-      </div>
-    </template>
-    <p v-else-if="!props.error" class="muted">まだ計算していません。</p>
+      </details>
+    </details>
   </section>
 </template>
 
@@ -109,24 +172,29 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
 }
 
 .leg > * + * {
-  margin-top: 10px;
-}
-
-.leg-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  margin-top: 12px;
 }
 
 .leg-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-size: 1rem;
 }
 
+.leg-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--color-text);
+  border-radius: 50%;
+  font-size: 0.85rem;
+}
+
 .leg-label {
-  display: inline-block;
-  margin-right: 6px;
   padding: 0 10px;
   border-radius: 999px;
   background: var(--color-text);
@@ -134,18 +202,16 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
   font-size: 0.9rem;
 }
 
-.status {
-  padding: 0 10px;
-  border-radius: 999px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  background: var(--color-warn-soft);
-  color: var(--color-warn);
+.time-input:empty {
+  display: none;
 }
 
-.status-calculated {
-  background: #e6f4e7;
-  color: var(--color-ok);
+.stale-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .times {
@@ -180,41 +246,102 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
 }
 
 .leg-stale .times,
-.leg-stale .summary,
-.leg-stale .visits {
+.leg-stale .summary {
   opacity: 0.5;
 }
 
-.visits,
-.rest-list {
-  margin: 0;
+.sub-title {
+  margin-bottom: 6px;
+  font-size: 0.95rem;
+}
+
+.stop-list,
+.rest-list,
+.sapa-list {
+  margin: 0 0 8px;
   padding: 0;
   list-style: none;
 }
 
-.visit,
-.rest {
+.stop {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.stop + .stop {
+  margin-top: 6px;
+}
+
+.stop-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 6px;
 }
 
-.visit + .visit,
-.rest + .rest {
-  border-top: 1px dashed var(--color-border);
+.stop-number {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-text);
+  color: #fff;
+  font-size: 0.85rem;
 }
 
-.visit-name,
-.rest-name {
+.stop-name {
   flex: 1;
+  min-width: 120px;
+  font-weight: 600;
   line-height: 1.4;
 }
 
-.visit-time,
-.rest-time {
+.stop-link {
+  margin-left: 4px;
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.stop-time {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.stop-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.input-auto {
+  width: auto;
+}
+
+.stay {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stay .input {
+  width: 86px;
+}
+
+.stop-moves {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.stop-moves .btn {
+  min-width: 36px;
+  padding: 4px 8px;
 }
 
 .rests {
@@ -223,12 +350,68 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
   background: var(--color-bg);
 }
 
-.rests > * + * {
-  margin-top: 6px;
+.rests > summary,
+.all-sapa > summary {
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.rests-title {
+.rests[open] > * + * {
+  margin-top: 8px;
+}
+
+.rest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.rest + .rest {
+  border-top: 1px dashed var(--color-border);
+}
+
+.rest-mark {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-return);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.rest-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 160px;
+  line-height: 1.4;
+}
+
+.rest-name {
   font-weight: 600;
-  font-size: 0.95rem;
+}
+
+.sapa-list li {
+  padding: 2px 0;
+  font-size: 0.9rem;
+}
+
+.sapa-kind {
+  display: inline-block;
+  min-width: 2.2em;
+  margin-right: 6px;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 </style>

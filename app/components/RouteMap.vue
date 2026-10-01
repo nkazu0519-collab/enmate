@@ -5,10 +5,15 @@ import 'leaflet/dist/leaflet.css'
 import type { MapPoint, MapRoute } from '~/types/map'
 
 const props = defineProps<{ routes: MapRoute[]; points: MapPoint[] }>()
+const emit = defineEmits<{ 'rest-click': [id: string] }>()
 
 const JAPAN_CENTER: [number, number] = [36.5, 138]
 const POINT_ICONS = { home: '🏠', venue: '🏟', stop: '📍', rest: '🅿️' }
 const POINT_LABELS = { home: '出発地', venue: '会場', stop: '立ち寄り先', rest: '休憩の提案' }
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+}
 
 const el = ref<HTMLElement>()
 let map: L.Map | undefined
@@ -43,17 +48,30 @@ function draw() {
     const position: [number, number] = [point.place.lat, point.place.lon]
     const small = point.kind === 'rest' || point.kind === 'stop'
     const size = small ? 28 : 36
-    L.marker(position, {
+    const html = point.kind === 'rest' ? escapeHtml(point.label ?? '休') : `${point.icon ?? POINT_ICONS[point.kind]}${point.label ? `<b>${escapeHtml(point.label)}</b>` : ''}`
+    const marker = L.marker(position, {
       icon: L.divIcon({
-        className: small ? 'map-pin map-pin-small' : 'map-pin',
-        html: point.icon ?? POINT_ICONS[point.kind],
+        className: `map-pin map-pin-${point.kind}${small ? ' map-pin-small' : ''}`,
+        html,
         iconSize: [size, size],
         iconAnchor: [size / 2, size / 2],
       }),
       title: `${POINT_LABELS[point.kind]}: ${point.place.name}`,
-    })
-      .bindTooltip(`${POINT_LABELS[point.kind]}: ${point.place.name}`)
-      .addTo(layer)
+    }).addTo(layer)
+
+    if (point.kind === 'rest' && point.id) {
+      // 休憩候補の吹き出しは常に出しておき、押すと「ここで30分休憩する」と同じように立ち寄り先に入れる（仕様書 §4.8）
+      const id = point.id
+      marker
+        .bindTooltip(
+          `<span class="rest-tip-badge">${escapeHtml(point.label ?? '')} ${escapeHtml(point.note ?? '')}</span><br>${escapeHtml(point.place.name)}<br><span class="rest-tip-add">＋ここで30分休憩する</span>`,
+          { permanent: true, interactive: true, direction: 'top', offset: [0, -14], className: 'rest-tip' },
+        )
+        .on('click', () => emit('rest-click', id))
+      marker.getTooltip()?.on('click', () => emit('rest-click', id))
+    } else {
+      marker.bindTooltip(`${POINT_LABELS[point.kind]}: ${point.place.name}`)
+    }
     bounds.extend(position)
   }
 
@@ -158,5 +176,43 @@ onBeforeUnmount(() => {
 
 .map-pin-small {
   font-size: 15px;
+}
+
+.map-pin b {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #1f2933;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.map-pin-rest {
+  border-color: #e65100;
+  background: #e65100;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rest-tip {
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rest-tip-badge {
+  font-weight: 700;
+  color: #e65100;
+}
+
+.rest-tip-add {
+  font-weight: 700;
+  color: #0d47a1;
 }
 </style>

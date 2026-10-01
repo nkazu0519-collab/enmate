@@ -39,6 +39,7 @@ export function formOf(overrides: Partial<PlanForm> = {}): PlanForm {
     matchEnd: '17:00',
     exitMinutes: 45,
     stops: {},
+    restIntervalMinutes: 120,
     ...overrides,
   }
 }

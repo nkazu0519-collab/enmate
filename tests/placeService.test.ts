@@ -35,7 +35,7 @@ afterEach(() => {
 describe('場所の検索', () => {
   it('名前・住所・種類・座標・スポットのコードを取り出す。座標のない結果は除く', async () => {
     expect(await searchPlaces('新潟駅')).toEqual([
-      { name: '新潟', lat: 37.9122, lon: 139.0617, spotCode: '00000-0001', address: '新潟県新潟市中央区花園', category: '駅' },
+      { name: '新潟', lat: 37.9122, lon: 139.0617, spotCode: '00000-0001', address: '新潟県新潟市中央区花園', category: '駅', categoryCode: '0802001001' },
     ])
   })
 

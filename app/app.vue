@@ -10,7 +10,9 @@ const isTop = computed(() => route.path === '/')
   <div>
     <header class="app-header" :class="{ 'app-header-dark': isTop }">
       <NuxtLink to="/" class="logo">えんメイト</NuxtLink>
-      <NuxtLink v-if="showNewButton" to="/plans/new" class="btn btn-small">＋新しいプラン</NuxtLink>
+      <NuxtLink v-if="showNewButton" to="/plans/new" class="btn btn-small">
+        <span class="label-wide">＋新しいプランを作る</span><span class="label-narrow">＋新規プラン</span>
+      </NuxtLink>
     </header>
     <NuxtPage />
   </div>
@@ -35,6 +37,20 @@ const isTop = computed(() => route.path === '/')
   font-weight: 700;
   color: var(--color-primary-dark);
   text-decoration: none;
+}
+
+.label-narrow {
+  display: none;
+}
+
+@media (max-width: 520px) {
+  .label-wide {
+    display: none;
+  }
+
+  .label-narrow {
+    display: inline;
+  }
 }
 
 .app-header-dark {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LegResult, Plan } from '../app/types/plan'
 import { buildLegs } from '../app/utils/legs'
-import { collectionTotals, groupByYear, homeTimes, planTotals } from '../app/utils/planSummary'
+import { collectionTotals, groupByYear, homeTimes, legTimelineItems, planTotals } from '../app/utils/planSummary'
 import { formOf, NAGANO, NIIGATA } from './helpers'
 
 function resultOf(overrides: Partial<LegResult>): LegResult {
@@ -89,5 +89,30 @@ describe('年ごとのまとめ', () => {
       ['2026', ['2026秋', '2026春']],
       ['2025', ['2025冬']],
     ])
+  })
+})
+
+describe('閲覧ページのタイムライン', () => {
+  it('E17: 行きは 出発 → 立ち寄り（〜出る時刻）→ 到着 の順', () => {
+    const plan = planOf('a', '2026-10-10', [
+      { departAt: '2026-10-10T08:50:00', arriveAt: '2026-10-10T12:00:00', stopVisits: [{ arriveAt: '2026-10-10T10:45:00', departAt: '2026-10-10T11:15:00' }] },
+      undefined,
+    ])
+    plan.legs[0]!.stops = [{ place: { name: '妙高SA', lat: 36.9, lon: 138.2 }, kind: 'rest', stayMinutes: 30, tollRoad: true }]
+    expect(legTimelineItems(plan, 'outbound').map((i) => [i.type, i.name, i.at.slice(11, 16), i.until?.slice(11, 16)])).toEqual([
+      ['depart', '新潟駅', '08:50', undefined],
+      ['stop', '妙高SA', '10:45', '11:15'],
+      ['arrive', '長野Uスタジアム', '12:00', undefined],
+    ])
+  })
+
+  it('E17: 帰りは最初に試合終了を出す', () => {
+    const plan = planOf('a', '2026-10-10', [undefined, { departAt: '2026-10-10T17:45:00', arriveAt: '2026-10-10T20:25:00' }])
+    expect(legTimelineItems(plan, 'return').map((i) => i.type)).toEqual(['matchEnd', 'depart', 'arrive'])
+    expect(legTimelineItems(plan, 'return')[0]!.at).toBe('2026-10-10T17:00:00')
+  })
+
+  it('計算していない区間は空', () => {
+    expect(legTimelineItems(planOf('a', '2026-10-10', [undefined, undefined]), 'outbound')).toEqual([])
   })
 })

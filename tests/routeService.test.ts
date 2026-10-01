@@ -45,13 +45,13 @@ describe('ルート検索の呼び出し回数', () => {
     })
   })
 
-  it('E13: 立ち寄り先は、入れた順に経由地（滞在時間つき）として渡す', async () => {
+  it('E13・E18: 立ち寄り先は入れた順に経由地（滞在時間つき）として渡し、SA/PA は有料道路上の地点にする', async () => {
     const [withStops] = buildLegs(
       formOf({
         stops: {
           outbound: [
             { place: { name: '高田城址公園', lat: 37.1003, lon: 138.2489 }, kind: 'sightseeing', stayMinutes: 30 },
-            { place: { name: '妙高SA', lat: 36.9, lon: 138.2 }, kind: 'rest', stayMinutes: 15 },
+            { place: { name: '妙高SA', lat: 36.9, lon: 138.2 }, kind: 'rest', stayMinutes: 30, tollRoad: true },
           ],
         },
       }),
@@ -59,7 +59,7 @@ describe('ルート検索の呼び出し回数', () => {
     await searchRoute(withStops!)
     expect(JSON.parse(callApi.mock.calls[0]![2].via)).toEqual([
       { lat: 37.1003, lon: 138.2489, 'stay-time': 30 },
-      { lat: 36.9, lon: 138.2, 'stay-time': 15 },
+      { lat: 36.9, lon: 138.2, 'stay-time': 30, 'road-type': 'toll' }, // SA/PA は有料道路上の地点として渡す
     ])
   })
 

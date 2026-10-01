@@ -7,6 +7,7 @@ export type Place = {
   spotCode?: string // NAVITIME のスポットのコード
   address?: string
   category?: string // 例: 駅、スタジアム。検索結果で同じ名前の場所を見分けるのに使う
+  categoryCode?: string // NAVITIME の種類のコード（例: 0302001 = ファミレス）。立ち寄り先の種類を決めるのに使う
 }
 
 export type StopKind = 'sightseeing' | 'meal' | 'rest' | 'other'
@@ -15,6 +16,9 @@ export type Stop = {
   place: Place
   kind: StopKind
   stayMinutes: number
+  // SA/PA のように有料道路（高速道路）の上にある地点。ルート検索で「有料道路上の地点」として渡す。
+  // 付けないと近くの一般道に寄せられ、高速を降りて寄ってから乗り直すルートになる（設計書 §7.2）
+  tollRoad?: boolean
 }
 
 export type Hotel = Place & {
@@ -90,4 +94,5 @@ export type PlanForm = {
   matchEnd: string
   exitMinutes: number
   stops: Record<string, Stop[]> // 区間の ID ごとの立ち寄り先
+  restIntervalMinutes: number
 }

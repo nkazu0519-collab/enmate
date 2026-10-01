@@ -3,8 +3,8 @@
 const HOST = 'navitime-route-car.p.rapidapi.com'
 const COORD = /^-?\d{1,3}(\.\d+)?,-?\d{1,3}(\.\d+)?$/
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/
-const MAX_VIA = 5
-const MAX_STAY = 300
+const MAX_VIA = 50
+const MAX_STAY = 720
 
 // 経由地（立ち寄り先）を確かめて、決まった形に組み直す。正しくなければ null
 function parseVia(raw: string): string | null {
@@ -19,9 +19,11 @@ function parseVia(raw: string): string | null {
   for (const v of list as Record<string, unknown>[]) {
     const { lat, lon } = v ?? {}
     const stay = v?.['stay-time']
+    const roadType = v?.['road-type']
     if (typeof lat !== 'number' || typeof lon !== 'number' || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
     if (!Number.isInteger(stay) || (stay as number) < 0 || (stay as number) > MAX_STAY) return null
-    via.push({ lat, lon, 'stay-time': stay })
+    if (roadType !== undefined && roadType !== 'toll') return null
+    via.push({ lat, lon, 'stay-time': stay, ...(roadType ? { 'road-type': roadType } : {}) })
   }
   return JSON.stringify(via)
 }

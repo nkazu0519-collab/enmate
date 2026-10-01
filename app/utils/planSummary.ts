@@ -42,3 +42,28 @@ export function groupByYear(plans: Plan[]): { year: string; plans: Plan[] }[] {
   }
   return groups
 }
+
+// 閲覧ページの「詳しいタイムライン」の1行（仕様書 §5.2）
+export type TimelineItem = {
+  at: string // 日本時間の YYYY-MM-DDTHH:mm:ss
+  type: 'depart' | 'stop' | 'arrive' | 'matchEnd'
+  name: string
+  until?: string // 立ち寄り先を出る時刻
+  spotCode?: string
+  legLabel?: string
+}
+
+// 区間（行き・帰り）の出来事を時刻の順に並べる。帰りは最初に試合終了を入れる
+export function legTimelineItems(plan: Plan, legId: string): TimelineItem[] {
+  const leg = plan.legs.find((l) => l.id === legId)
+  if (!leg?.result) return []
+  const items: TimelineItem[] = []
+  if (leg.timeRule === 'departAt') items.push({ at: `${plan.matchDate}T${plan.matchEnd}:00`, type: 'matchEnd', name: plan.venue.name })
+  items.push({ at: leg.result.departAt, type: 'depart', name: leg.from.name, legLabel: leg.label })
+  leg.stops.forEach((stop, i) => {
+    const visit = leg.result!.stopVisits?.[i]
+    if (visit) items.push({ at: visit.arriveAt, type: 'stop', name: stop.place.name, until: visit.departAt, spotCode: stop.place.spotCode })
+  })
+  items.push({ at: leg.result.arriveAt, type: 'arrive', name: leg.to.name })
+  return items
+}

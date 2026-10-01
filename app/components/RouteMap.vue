@@ -7,8 +7,8 @@ import type { MapPoint, MapRoute } from '~/types/map'
 const props = defineProps<{ routes: MapRoute[]; points: MapPoint[] }>()
 
 const JAPAN_CENTER: [number, number] = [36.5, 138]
-const POINT_ICONS = { home: '🏠', venue: '🏟' }
-const POINT_LABELS = { home: '出発地', venue: '会場' }
+const POINT_ICONS = { home: '🏠', venue: '🏟', stop: '📍', rest: '🅿️' }
+const POINT_LABELS = { home: '出発地', venue: '会場', stop: '立ち寄り先', rest: '休憩の提案' }
 
 const el = ref<HTMLElement>()
 let map: L.Map | undefined
@@ -24,21 +24,32 @@ function draw() {
     ...props.routes.filter((r) => r.direction === 'return'),
     ...props.routes.filter((r) => r.direction !== 'return'),
   ]
-  for (const route of ordered) {
-    if (route.shape.length < 2) continue
+  const drawn = ordered.filter((route) => route.shape.length >= 2)
+  // 白い縁取りを先にすべて敷いてから線を重ねる（1本ずつ描くと、行きの縁取りが帰りの線を隠す）
+  for (const route of drawn) {
+    L.polyline(route.shape, { color: '#ffffff', weight: (route.direction === 'return' ? 10 : 5) + 6, opacity: 0.95 }).addTo(layer)
+  }
+  for (const route of drawn) {
     const isReturn = route.direction === 'return'
     const line = L.polyline(route.shape, {
-      color: isReturn ? '#e65100' : '#1565c0',
-      weight: isReturn ? 9 : 4,
-      opacity: isReturn ? 0.55 : 0.95,
+      color: isReturn ? '#e65100' : '#0d47a1',
+      weight: isReturn ? 10 : 5,
+      opacity: isReturn ? 0.75 : 1,
     }).addTo(layer)
     bounds.extend(line.getBounds())
   }
 
   for (const point of props.points) {
     const position: [number, number] = [point.place.lat, point.place.lon]
+    const small = point.kind === 'rest' || point.kind === 'stop'
+    const size = small ? 28 : 36
     L.marker(position, {
-      icon: L.divIcon({ className: 'map-pin', html: POINT_ICONS[point.kind], iconSize: [36, 36], iconAnchor: [18, 18] }),
+      icon: L.divIcon({
+        className: small ? 'map-pin map-pin-small' : 'map-pin',
+        html: point.icon ?? POINT_ICONS[point.kind],
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      }),
       title: `${POINT_LABELS[point.kind]}: ${point.place.name}`,
     })
       .bindTooltip(`${POINT_LABELS[point.kind]}: ${point.place.name}`)
@@ -52,7 +63,8 @@ function draw() {
 
 onMounted(() => {
   map = L.map(el.value!)
-  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+  // 標準地図だと色が濃くてルートの線が埋もれるので、淡色地図を使う
+  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
     minZoom: 5,
     maxZoom: 18,
     attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
@@ -93,6 +105,11 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
+/* 地図の色味を落として、ルートの線と目印を目立たせる */
+.map :deep(.leaflet-tile-pane) {
+  filter: saturate(0.3) brightness(1.04);
+}
+
 .map {
   flex: 1;
   min-height: 320px;
@@ -114,15 +131,15 @@ onBeforeUnmount(() => {
 }
 
 .swatch-outbound {
-  height: 4px;
-  background: var(--color-outbound);
+  height: 5px;
+  background: var(--color-primary-dark);
 }
 
 .swatch-return {
-  height: 9px;
+  height: 10px;
   margin-left: 12px;
   background: var(--color-return);
-  opacity: 0.55;
+  opacity: 0.75;
 }
 </style>
 
@@ -137,5 +154,9 @@ onBeforeUnmount(() => {
   background: #fff;
   font-size: 20px;
   line-height: 1;
+}
+
+.map-pin-small {
+  font-size: 15px;
 }
 </style>

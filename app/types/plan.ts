@@ -30,6 +30,12 @@ export type RestArea = {
   passAt: string // その SA/PA を通る時刻
 }
 
+// 立ち寄り先に着く時刻と、そこを出る時刻（区間の stops と同じ順）
+export type StopVisit = {
+  arriveAt: string
+  departAt: string
+}
+
 // 時刻はすべて日本時間の YYYY-MM-DDTHH:mm:ss で持つ（calculatedAt・createdAt・updatedAt だけは記録した瞬間の UTC）。
 export type LegResult = {
   departAt: string
@@ -39,6 +45,7 @@ export type LegResult = {
   tollYen: number
   trafficConsidered: boolean // 渋滞予測込みか
   restAreas: RestArea[]
+  stopVisits?: StopVisit[] // 段階1で保存したプランには無い
   shape: [number, number][] // 間引いたルートの形（緯度, 経度）。地図用
   calculatedAt: string
   inputHash: string // 計算したときの条件。今の条件と違えば「未計算」
@@ -82,4 +89,5 @@ export type PlanForm = {
   arriveBy: string
   matchEnd: string
   exitMinutes: number
+  stops: Record<string, Stop[]> // 区間の ID ごとの立ち寄り先
 }

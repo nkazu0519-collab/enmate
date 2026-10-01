@@ -2,7 +2,9 @@
 // プランの閲覧。保存したときの計算結果だけを表示し、NAVITIME は呼ばない
 import type { MapPoint, MapRoute } from '~/types/map'
 import { formatDateJa, formatDistance, formatDuration, formatTimestamp, formatYen } from '~/utils/datetime'
+import { STOP_KIND_ICONS } from '~/utils/legs'
 import { deletePlan, findPlan } from '~/utils/planStore'
+import { suggestRests } from '~/utils/rest'
 
 const route = useRoute()
 const plan = findPlan(String(route.params.id))
@@ -22,6 +24,15 @@ const mapPoints: MapPoint[] = plan
   ? [
       { kind: 'home', place: plan.home },
       { kind: 'venue', place: plan.venue },
+      ...plan.legs.flatMap((leg) => leg.stops.map((stop) => ({ kind: 'stop' as const, place: stop.place, icon: STOP_KIND_ICONS[stop.kind] }))),
+      ...plan.legs.flatMap((leg) =>
+        leg.result
+          ? suggestRests(leg.result, plan.restIntervalMinutes).suggestions.map((area) => ({
+              kind: 'rest' as const,
+              place: { name: area.name, lat: area.lat, lon: area.lon },
+            }))
+          : [],
+      ),
     ]
   : []
 
@@ -72,7 +83,14 @@ async function remove() {
         保存した時点（{{ formatTimestamp(plan.updatedAt) }}）に計算した、渋滞を考慮していない時刻です。高速料金は ETC・普通車の料金で、休日や深夜の割引は反映されないことがあります。
       </p>
 
-      <LegCard v-for="leg in plan.legs" :key="leg.id" :leg="leg" :result="leg.result" status="calculated" />
+      <LegCard
+        v-for="leg in plan.legs"
+        :key="leg.id"
+        :leg="leg"
+        :result="leg.result"
+        status="calculated"
+        :rest-interval-minutes="plan.restIntervalMinutes"
+      />
 
       <NuxtLink to="/" class="btn">← 保存したプランの一覧へ戻る</NuxtLink>
     </div>

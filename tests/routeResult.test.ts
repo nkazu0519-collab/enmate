@@ -125,3 +125,33 @@ describe.skipIf(!process.env.ROUTE_DUMP)('実際の応答（新潟駅 → 長野
     expect(result.shape.length).toBeGreaterThan(50)
   })
 })
+
+describe('立ち寄り先（経由地）のある応答', () => {
+  // 2026-10-01 の実際の応答では、経由地は name が「経由地」、with_via が true で返った
+  const withVia: RouteItem = {
+    ...item,
+    sections: [
+      { type: 'point', name: 'start', coord: { lat: 37.9, lon: 139.0 } },
+      { type: 'move', from_time: '2026-10-10T08:36:35+09:00', to_time: '2026-10-10T10:25:53+09:00' },
+      { type: 'point', name: '経由地', coord: { lat: 37.1, lon: 138.2 }, with_via: true },
+      { type: 'move', from_time: '2026-10-10T10:55:53+09:00', to_time: '2026-10-10T11:40:00+09:00' },
+      { type: 'point', name: '妙高ＳＡ', coord: { lat: 36.9, lon: 138.2 }, sapa_type: 'SA' },
+      { type: 'move', from_time: '2026-10-10T11:40:00+09:00', to_time: '2026-10-10T12:00:00+09:00' },
+      { type: 'point', name: 'goal', coord: { lat: 36.6, lon: 138.2 } },
+    ],
+  }
+
+  it('E13: 立ち寄り先に着く時刻と、出る時刻を取り出す', () => {
+    const result = parseRouteItem(withVia, 'hash-2', '2026-10-01T05:00:00.000Z')
+    expect(result.stopVisits).toEqual([{ arriveAt: '2026-10-10T10:25:53', departAt: '2026-10-10T10:55:53' }])
+  })
+
+  it('立ち寄り先は SA/PA の一覧には入れない', () => {
+    const result = parseRouteItem(withVia, 'hash-2', '2026-10-01T05:00:00.000Z')
+    expect(result.restAreas.map((a) => a.name)).toEqual(['妙高ＳＡ'])
+  })
+
+  it('立ち寄り先がなければ、空の一覧', () => {
+    expect(parseRouteItem(item, 'hash-1', '2026-10-01T05:00:00.000Z').stopVisits).toEqual([])
+  })
+})

@@ -76,6 +76,11 @@ export function formatYen(yen: number): string {
   return `¥${yen.toLocaleString('ja-JP')}`
 }
 
+// from から to まで何分あるか（秒は切り捨て）
+export function minutesBetween(from: string, to: string): number {
+  return Math.floor((toUtcMs(to) - toUtcMs(from)) / 60_000)
+}
+
 // from から to まで何日あるか（to が過去なら負の数）
 export function daysBetween(from: string, to: string): number {
   return Math.round((toUtcMs(`${to}T00:00:00`) - toUtcMs(`${from}T00:00:00`)) / 86_400_000)

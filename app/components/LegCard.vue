@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 区間（行き・帰り）1つ分の計算結果のカード
-import type { Leg, LegResult } from '~/types/plan'
+import type { Leg, LegResult, RestArea } from '~/types/plan'
 import { datePart, formatDateJa, formatDistance, formatDuration, formatYen, timePart } from '~/utils/datetime'
-import type { LegStatus } from '~/utils/legs'
+import { MAX_STOPS, STOP_KIND_ICONS, STOP_KIND_LABELS, type LegStatus } from '~/utils/legs'
+import { suggestRests } from '~/utils/rest'
 
 const props = defineProps<{
   leg: Leg
@@ -10,7 +11,14 @@ const props = defineProps<{
   status: LegStatus
   loading?: boolean
   error?: string
+  restIntervalMinutes: number
+  canAddRest?: boolean // 作成・編集ページでだけ「休憩に入れる」を出す
 }>()
+const emit = defineEmits<{ 'add-rest': [area: RestArea] }>()
+
+// 休憩の提案は、今の条件で計算した結果からだけ出す
+const advice = computed(() => (props.result && props.status === 'calculated' ? suggestRests(props.result, props.restIntervalMinutes) : null))
+const intervalText = computed(() => formatDuration(props.restIntervalMinutes))
 
 const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', stale: '未計算（条件が変わりました）', none: '未計算' }
 </script>
@@ -47,6 +55,41 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
         運転 {{ formatDuration(props.result.driveMinutes) }}・{{ formatDistance(props.result.distanceMeters) }}
         <template v-if="props.result.tollYen > 0">・高速 {{ formatYen(props.result.tollYen) }}</template>
       </p>
+
+      <ol v-if="props.leg.stops.length > 0" class="visits">
+        <li v-for="(stop, i) in props.leg.stops" :key="i" class="visit">
+          <span class="visit-icon" aria-hidden="true">{{ STOP_KIND_ICONS[stop.kind] }}</span>
+          <span class="visit-name">{{ stop.place.name }}<span class="muted">（{{ STOP_KIND_LABELS[stop.kind] }}・{{ stop.stayMinutes }}分）</span></span>
+          <span v-if="props.status === 'calculated' && props.result.stopVisits?.[i]" class="visit-time">
+            {{ timePart(props.result.stopVisits[i]!.arriveAt) }}〜{{ timePart(props.result.stopVisits[i]!.departAt) }}
+          </span>
+        </li>
+      </ol>
+
+      <div v-if="advice && (advice.suggestions.length > 0 || advice.longStretches.length > 0)" class="rests">
+        <p class="rests-title">休憩の提案（{{ intervalText }}ごと）</p>
+        <ul v-if="advice.suggestions.length > 0" class="rest-list">
+          <li v-for="area in advice.suggestions" :key="`${area.name}${area.passAt}`" class="rest">
+            <span class="rest-time">{{ timePart(area.passAt) }}</span>
+            <span class="rest-name">{{ area.name }}</span>
+            <button
+              v-if="props.canAddRest"
+              type="button"
+              class="btn btn-small"
+              :disabled="props.leg.stops.length >= MAX_STOPS"
+              @click="emit('add-rest', area)"
+            >
+              休憩に入れる
+            </button>
+          </li>
+        </ul>
+        <p v-for="stretch in advice.longStretches" :key="stretch.from" class="notice notice-warn">
+          {{ timePart(stretch.from) }}〜{{ timePart(stretch.to) }} は、SA/PA で休めないまま {{ formatDuration(stretch.minutes) }} 運転が続きます。道の駅やコンビニで休憩を取ってください。
+        </p>
+        <p v-if="props.canAddRest && advice.suggestions.length > 0" class="muted">
+          「休憩に入れる」を押すと、15分の休憩として立ち寄り先に入ります。計算し直すと、休憩の時間も時刻に入ります。
+        </p>
+      </div>
     </template>
     <p v-else-if="!props.error" class="muted">まだ計算していません。</p>
   </section>
@@ -137,7 +180,55 @@ const STATUS_LABELS: Record<LegStatus, string> = { calculated: '計算済み', s
 }
 
 .leg-stale .times,
-.leg-stale .summary {
+.leg-stale .summary,
+.leg-stale .visits {
   opacity: 0.5;
+}
+
+.visits,
+.rest-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visit,
+.rest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.visit + .visit,
+.rest + .rest {
+  border-top: 1px dashed var(--color-border);
+}
+
+.visit-name,
+.rest-name {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.visit-time,
+.rest-time {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rests {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-bg);
+}
+
+.rests > * + * {
+  margin-top: 6px;
+}
+
+.rests-title {
+  font-weight: 600;
+  font-size: 0.95rem;
 }
 </style>

@@ -15,6 +15,10 @@ async function fetchRoute(leg: Leg, hash: string): Promise<LegResult> {
     start: `${leg.from.lat},${leg.from.lon}`,
     goal: `${leg.to.lat},${leg.to.lon}`,
     ...(leg.timeRule === 'arriveBy' ? { goal_time: leg.time } : { start_time: leg.time }),
+    // 立ち寄り先は、入れた順に経由地として渡す。滞在時間も時刻に含めて計算される
+    ...(leg.stops.length > 0
+      ? { via: JSON.stringify(leg.stops.map((s) => ({ lat: s.place.lat, lon: s.place.lon, 'stay-time': s.stayMinutes }))) }
+      : {}),
   })
   const result = parseRouteItem(item, hash, new Date().toISOString())
   writeCache(`route:${hash}`, result)

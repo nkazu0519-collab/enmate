@@ -2,10 +2,21 @@
 // プランの作成・編集の画面。initial を渡すと編集になる
 import { searchRoute } from '~/services/route'
 import type { MapPoint, MapRoute } from '~/types/map'
-import type { LegResult, Plan, PlanForm } from '~/types/plan'
+import type { LegResult, Plan, PlanForm, RestArea, StopKind } from '~/types/plan'
 import { formatDuration, formatYen, nextSaturday, todayLocal } from '~/utils/datetime'
-import { buildLegs, defaultPlanName, legInputHash, legStatus, MAX_EXIT_MINUTES, validateForm } from '~/utils/legs'
+import {
+  buildLegs,
+  DEFAULT_STAY_MINUTES,
+  defaultPlanName,
+  legInputHash,
+  legStatus,
+  MAX_EXIT_MINUTES,
+  MAX_STOPS,
+  STOP_KIND_ICONS,
+  validateForm,
+} from '~/utils/legs'
 import { savePlan } from '~/utils/planStore'
+import { suggestRests } from '~/utils/rest'
 
 const props = defineProps<{ initial?: Plan }>()
 const isEdit = computed(() => !!props.initial)
@@ -20,6 +31,7 @@ const form = reactive<PlanForm>(
         arriveBy: props.initial.arriveBy,
         matchEnd: props.initial.matchEnd,
         exitMinutes: props.initial.exitMinutes,
+        stops: Object.fromEntries(props.initial.legs.map((leg) => [leg.id, leg.stops])),
       }
     : {
         name: '',
@@ -29,8 +41,10 @@ const form = reactive<PlanForm>(
         arriveBy: '12:00',
         matchEnd: '17:00',
         exitMinutes: 45,
+        stops: { outbound: [], return: [] },
       },
 )
+const restIntervalMinutes = props.initial?.restIntervalMinutes ?? 120
 
 // 区間ごとの、いちばん新しい計算結果。今の条件のものとは限らない（legStatus で見分ける）
 const results = ref<Record<string, LegResult>>({})
@@ -43,7 +57,9 @@ const calculating = ref(false)
 const attempted = ref(false)
 
 const errors = computed(() => validateForm(form))
-const legs = computed(() => (errors.value.length === 0 ? buildLegs(form) : []))
+// 区間は、立ち寄り先以外の条件がそろえば組み立てる（立ち寄り先の入力に誤りがあっても、直せるよう欄は出したままにする）
+const baseErrors = computed(() => validateForm({ ...form, stops: {} }))
+const legs = computed(() => (baseErrors.value.length === 0 ? buildLegs(form) : []))
 const statuses = computed(() => Object.fromEntries(legs.value.map((leg) => [leg.id, legStatus(leg, results.value[leg.id])])))
 const uncalculated = computed(() => legs.value.filter((leg) => statuses.value[leg.id] !== 'calculated'))
 const allCalculated = computed(() => legs.value.length > 0 && uncalculated.value.length === 0)
@@ -120,7 +136,7 @@ async function save() {
     arriveBy: form.arriveBy,
     matchEnd: form.matchEnd,
     exitMinutes: form.exitMinutes,
-    restIntervalMinutes: props.initial?.restIntervalMinutes ?? 120,
+    restIntervalMinutes,
     hotelsBefore: props.initial?.hotelsBefore ?? [],
     hotelsAfter: props.initial?.hotelsAfter ?? [],
     legs: legs.value.map((leg) => ({ ...leg, result: results.value[leg.id] })),
@@ -160,9 +176,25 @@ const mapRoutes = computed<MapRoute[]>(() =>
       shape: results.value[leg.id]!.shape,
     })),
 )
+// 勧められた SA/PA を、15分の休憩として立ち寄り先に入れる。今の計算結果の時刻で、通る順の位置に入れる
+function addRest(legId: string, area: RestArea) {
+  const stops = form.stops[legId] ?? []
+  if (stops.length >= MAX_STOPS) return
+  const visits = results.value[legId]?.stopVisits ?? []
+  const index = visits.filter((visit) => visit.arriveAt < area.passAt).length
+  const rest = { place: { name: area.name, lat: area.lat, lon: area.lon }, kind: 'rest' as StopKind, stayMinutes: DEFAULT_STAY_MINUTES.rest }
+  form.stops[legId] = [...stops.slice(0, index), rest, ...stops.slice(index)]
+}
+
 const mapPoints = computed<MapPoint[]>(() => [
   ...(form.home ? [{ kind: 'home' as const, place: form.home }] : []),
   ...(form.venue ? [{ kind: 'venue' as const, place: form.venue }] : []),
+  ...legs.value.flatMap((leg) => leg.stops.map((stop) => ({ kind: 'stop' as const, place: stop.place, icon: STOP_KIND_ICONS[stop.kind] }))),
+  ...legs.value.flatMap((leg) => {
+    const result = results.value[leg.id]
+    if (!result || statuses.value[leg.id] !== 'calculated') return []
+    return suggestRests(result, restIntervalMinutes).suggestions.map((area) => ({ kind: 'rest' as const, place: { name: area.name, lat: area.lat, lon: area.lon } }))
+  }),
 ])
 </script>
 
@@ -211,7 +243,7 @@ const mapPoints = computed<MapPoint[]>(() => [
         </button>
         <p class="muted">
           ルートを検索するのは、このボタンを押した時だけです。今の条件でまだ計算していない区間の数だけ、NAVITIME
-          の無料枠を使います（行きと帰りで最大2回）。
+          の無料枠を使います（行きと帰りで最大2回）。立ち寄り先を変えた区間も、計算し直しになります。
         </p>
       </section>
 
@@ -222,15 +254,29 @@ const mapPoints = computed<MapPoint[]>(() => [
           <p class="notice notice-info">
             渋滞を考慮していない時刻です。混みそうな日は、余裕を持って出発してください。高速料金は ETC・普通車の料金で、休日や深夜の割引は反映されないことがあります。
           </p>
-          <LegCard
-            v-for="leg in legs"
-            :key="leg.id"
-            :leg="leg"
-            :result="results[leg.id]"
-            :status="statuses[leg.id]!"
-            :loading="calculating && statuses[leg.id] !== 'calculated'"
-            :error="failureOf(leg.id)"
-          />
+          <div v-for="leg in legs" :key="leg.id" class="leg-block">
+            <LegCard
+              :leg="leg"
+              :result="results[leg.id]"
+              :status="statuses[leg.id]!"
+              :loading="calculating && statuses[leg.id] !== 'calculated'"
+              :error="failureOf(leg.id)"
+              :rest-interval-minutes="restIntervalMinutes"
+              can-add-rest
+              @add-rest="addRest(leg.id, $event)"
+            />
+            <LegStops v-if="form.venue" v-model="form.stops[leg.id]!" class="card" :leg-label="leg.label" :venue="form.venue" />
+          </div>
+          <template v-if="!allCalculated">
+            <div v-if="attempted && errors.length > 0" class="notice notice-error" role="alert">
+              <ul>
+                <li v-for="message in errors" :key="message">{{ message }}</li>
+              </ul>
+            </div>
+            <button type="button" class="btn btn-primary btn-block" :disabled="calculating" @click="calculate">
+              {{ calculateLabel }}
+            </button>
+          </template>
         </template>
       </section>
 
@@ -295,6 +341,10 @@ const mapPoints = computed<MapPoint[]>(() => [
 .field .muted {
   display: block;
   margin-top: 4px;
+}
+
+.leg-block > * + * {
+  margin-top: 8px;
 }
 
 .save {

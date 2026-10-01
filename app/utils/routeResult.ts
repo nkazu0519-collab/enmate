@@ -1,6 +1,6 @@
 // NAVITIME のルート検索（車）の応答を、このアプリの計算結果の形にする。
 // 応答の形は 2026-10-01 に RapidAPI 版を実際に呼んで確かめた。
-import type { LegResult, RestArea } from '../types/plan'
+import type { LegResult, RestArea, StopVisit } from '../types/plan'
 import { stripOffset } from './datetime'
 import { simplifyShape } from './shape'
 
@@ -10,6 +10,8 @@ type RouteSection = {
   coord?: { lat: number; lon: number }
   to_time?: string
   sapa_type?: 'SA' | 'PA'
+  with_via?: boolean // 立ち寄り先（経由地）の地点に付く
+  from_time?: string
 }
 
 export type RouteItem = {
@@ -45,6 +47,20 @@ function restAreasOf(sections: RouteSection[]): RestArea[] {
   return areas
 }
 
+// 立ち寄り先の地点は name が「経由地」、with_via が true で返る（2026-10-01 に確認）。
+// 着く時刻は直前の移動区間の終わり、出る時刻は直後の移動区間の始まり
+function stopVisitsOf(sections: RouteSection[]): StopVisit[] {
+  const visits: StopVisit[] = []
+  sections.forEach((section, i) => {
+    if (section.type !== 'point' || !section.with_via) return
+    const arrivedAt = sections[i - 1]?.to_time
+    const leftAt = sections[i + 1]?.from_time
+    if (!arrivedAt || !leftAt) return
+    visits.push({ arriveAt: stripOffset(arrivedAt), departAt: stripOffset(leftAt) })
+  })
+  return visits
+}
+
 function shapeOf(item: RouteItem): [number, number][] {
   const points: [number, number][] = []
   for (const feature of item.shapes?.features ?? []) {
@@ -67,6 +83,7 @@ export function parseRouteItem(item: RouteItem, inputHash: string, calculatedAt:
     tollYen: move.fare?.unit_1025_2 ?? 0,
     trafficConsidered: false, // RapidAPI 版では渋滞情報を使えない（設計書 §7.3）
     restAreas: restAreasOf(item.sections),
+    stopVisits: stopVisitsOf(item.sections),
     shape: shapeOf(item),
     calculatedAt,
     inputHash,

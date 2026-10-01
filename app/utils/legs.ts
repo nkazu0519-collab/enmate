@@ -1,10 +1,17 @@
 // 入力した条件から、区間（行き・帰り）を組み立てる。ここでは API を呼ばない。
-import type { Leg, LegResult, Place, PlanForm } from '../types/plan'
+import type { Leg, LegResult, Place, PlanForm, StopKind } from '../types/plan'
 import { addMinutes, formatMonthDay, toLocalIso } from './datetime'
 
 const TIME_PATTERN = /^\d{2}:\d{2}$/
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 export const MAX_EXIT_MINUTES = 180
+// 立ち寄り先は区間ごとに5か所まで、滞在は300分まで（NAVITIME は50地点・720分まで受け付ける）
+export const MAX_STOPS = 5
+export const MAX_STAY_MINUTES = 300
+
+export const STOP_KIND_LABELS: Record<StopKind, string> = { sightseeing: '観光', meal: '食事', rest: '休憩', other: 'その他' }
+export const STOP_KIND_ICONS: Record<StopKind, string> = { sightseeing: '📷', meal: '🍴', rest: '☕', other: '📍' }
+export const DEFAULT_STAY_MINUTES: Record<StopKind, number> = { sightseeing: 60, meal: 60, rest: 15, other: 30 }
 
 function samePlace(a: Place, b: Place): boolean {
   if (a.spotCode && b.spotCode) return a.spotCode === b.spotCode
@@ -28,6 +35,15 @@ export function validateForm(form: PlanForm): string[] {
   if (TIME_PATTERN.test(form.arriveBy) && TIME_PATTERN.test(form.matchEnd) && form.matchEnd <= form.arriveBy) {
     errors.push('試合の終了時刻は、会場に着きたい時刻より後にしてください')
   }
+  for (const [legId, stops] of Object.entries(form.stops)) {
+    const label = legId === 'return' ? '帰り' : '行き'
+    if (stops.length > MAX_STOPS) errors.push(`${label}の立ち寄り先は、${MAX_STOPS}か所までにしてください`)
+    for (const stop of stops) {
+      if (!Number.isInteger(stop.stayMinutes) || stop.stayMinutes < 0 || stop.stayMinutes > MAX_STAY_MINUTES) {
+        errors.push(`${label}の「${stop.place.name}」にいる時間は、0〜${MAX_STAY_MINUTES}分で入れてください`)
+      }
+    }
+  }
   return errors
 }
 
@@ -42,7 +58,7 @@ export function buildLegs(form: PlanForm): Leg[] {
       to: form.venue,
       timeRule: 'arriveBy',
       time: toLocalIso(form.matchDate, form.arriveBy),
-      stops: [],
+      stops: form.stops.outbound ?? [],
     },
     {
       id: 'return',
@@ -51,7 +67,7 @@ export function buildLegs(form: PlanForm): Leg[] {
       to: form.home,
       timeRule: 'departAt',
       time: addMinutes(toLocalIso(form.matchDate, form.matchEnd), form.exitMinutes),
-      stops: [],
+      stops: form.stops.return ?? [],
     },
   ]
 }

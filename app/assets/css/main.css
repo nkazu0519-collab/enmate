@@ -153,6 +153,21 @@ select {
   background: #fff;
 }
 
+/* iPhone・iPad の Safari は、日付・時刻の欄を独自の部品で描き、指定した幅を無視して枠からはみ出す。
+   その部品で描かせないようにして、ほかの欄と同じ幅に従わせる（押すと選ぶ画面が出るのは同じ。2026-10-02 本人のスマホで判明） */
+@supports (-webkit-touch-callout: none) {
+  input.input[type='date'],
+  input.input[type='time'] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* Safari で値が真ん中に寄るので、ほかの欄と同じ左寄せにする */
+input.input::-webkit-date-and-time-value {
+  text-align: left;
+}
+
 .input:focus-visible,
 .btn:focus-visible {
   outline: 3px solid #90caf9;

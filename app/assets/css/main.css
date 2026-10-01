@@ -144,6 +144,8 @@ select {
 
 .input {
   width: 100%;
+  /* 日付・時刻の欄は、ブラウザ（特に iPhone の Safari）が決めた幅より縮まないので、縮められるようにする */
+  min-width: 0;
   min-height: 44px;
   padding: 8px 12px;
   border: 1px solid var(--color-border);

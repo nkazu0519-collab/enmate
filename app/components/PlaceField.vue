@@ -73,7 +73,7 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
         <p class="results-title">{{ props.label }}を選ぶ</p>
         <button type="button" class="btn btn-small" @click="results = null">✕ 閉じる</button>
       </div>
-      <p class="muted">「{{ searched }}」の検索結果（{{ results.length }}件）です</p>
+      <p class="muted results-count">「{{ searched }}」の検索結果（{{ results.length }}件）です</p>
       <ul class="results">
         <!-- カードを押して選ぶ（本人の修正、2026-10-01。「ここにする」のボタンはなくした）。キーボードでは Enter・スペースで選ぶ -->
         <li
@@ -96,9 +96,9 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
           <span v-if="isSelected(place)" class="muted">✓ {{ props.label }}に設定済み</span>
         </li>
       </ul>
-      <button v-if="results.length > FIRST_COUNT && !showAll" type="button" class="btn btn-block" @click="showAll = true">
-        もっと見る（あと{{ results.length - FIRST_COUNT }}件）
-      </button>
+      <div v-if="results.length > FIRST_COUNT && !showAll" class="results-more">
+        <button type="button" class="btn btn-block" @click="showAll = true">もっと見る（あと{{ results.length - FIRST_COUNT }}件）</button>
+      </div>
     </div>
   </div>
 </template>
@@ -128,15 +128,12 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
   font-weight: 600;
 }
 
+/* 検索結果の行は大きな枠の端から端まで広げ、行どうしは線だけで区切る（2026-10-02 本人の指摘） */
 .results-box {
-  padding: 10px 12px;
+  overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
-}
-
-.results-box > * + * {
-  margin-top: 6px;
 }
 
 .results-head {
@@ -144,10 +141,15 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 10px 14px 0;
 }
 
 .results-title {
   font-weight: 700;
+}
+
+.results-count {
+  padding: 4px 14px 10px;
 }
 
 .results {
@@ -161,17 +163,11 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 0;
-}
-
-.result + .result {
+  padding: 12px 14px;
   border-top: 1px solid var(--color-border);
 }
 
 .result-choosable {
-  margin: 0 -8px;
-  padding: 8px;
-  border-radius: 6px;
   cursor: pointer;
 }
 
@@ -179,9 +175,15 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
   background: var(--color-primary-soft);
 }
 
+/* 枠で切れないよう、内側に線を引く */
 .result-choosable:focus-visible {
   outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+
+.results-more {
+  padding: 10px 14px;
+  border-top: 1px solid var(--color-border);
 }
 
 .result-body {

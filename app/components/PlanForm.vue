@@ -892,8 +892,16 @@ function onRestClick(id: string) {
 
 .row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, 1fr): 中身の幅より縮まない欄（日付・時刻）がはみ出して、隣の欄に重ならないようにする */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+/* スマホの幅では縦に積む（iPhone の日付の欄は、横に並べられるほど縮まないことがある） */
+@media (max-width: 480px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .input-auto {

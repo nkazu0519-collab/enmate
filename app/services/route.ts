@@ -1,0 +1,35 @@
+// ルート検索。今の中身は NAVITIME ルート検索（車）。
+import type { Leg, LegResult } from '~/types/plan'
+import { readCache, writeCache } from '~/utils/apiCache'
+import { legInputHash } from '~/utils/legs'
+import { parseRouteItem, type RouteItem } from '~/utils/routeResult'
+import { callApi } from './api'
+
+const CACHE_MS = 24 * 60 * 60 * 1000 // 1日
+
+// 同じ条件の検索が進んでいる間にもう一度呼ばれたら、同じ検索の結果を待つ（二重に呼ばない）
+const running = new Map<string, Promise<LegResult>>()
+
+async function fetchRoute(leg: Leg, hash: string): Promise<LegResult> {
+  const { item } = await callApi<{ item: RouteItem }>('route', '/api/route', {
+    start: `${leg.from.lat},${leg.from.lon}`,
+    goal: `${leg.to.lat},${leg.to.lon}`,
+    ...(leg.timeRule === 'arriveBy' ? { goal_time: leg.time } : { start_time: leg.time }),
+  })
+  const result = parseRouteItem(item, hash, new Date().toISOString())
+  writeCache(`route:${hash}`, result)
+  return result
+}
+
+export function searchRoute(leg: Leg): Promise<LegResult> {
+  const hash = legInputHash(leg)
+  const cached = readCache<LegResult>(`route:${hash}`, CACHE_MS)
+  if (cached) return Promise.resolve(cached)
+
+  let promise = running.get(hash)
+  if (!promise) {
+    promise = fetchRoute(leg, hash).finally(() => running.delete(hash))
+    running.set(hash, promise)
+  }
+  return promise
+}

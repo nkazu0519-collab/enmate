@@ -5,6 +5,7 @@ import type { Leg, Place } from '~/types/plan'
 import { datePart, formatDateJa, formatDistance, formatDuration, formatTimestamp, formatYen, timePart } from '~/utils/datetime'
 import { sideOf, STOP_KIND_ICONS } from '~/utils/legs'
 import { stayLabel, timelineItems, type TimelineItem } from '~/utils/planSummary'
+import { planFileName, planToFileText } from '~/utils/planFile'
 import { deletePlan, findPlan } from '~/utils/planStore'
 
 const route = useRoute()
@@ -82,6 +83,17 @@ async function remove() {
   }
   await navigateTo('/')
 }
+
+// プランを JSON ファイルとして保存する。スマホへ送り、トップ画面の「プランを読み込む」で開く
+function exportPlan() {
+  if (!plan) return
+  const url = URL.createObjectURL(new Blob([planToFileText(plan)], { type: 'application/json' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = planFileName(plan)
+  a.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -96,8 +108,10 @@ async function remove() {
 
       <div class="actions">
         <NuxtLink :to="`/plans/${plan.id}/edit`" class="btn">編集</NuxtLink>
+        <button type="button" class="btn" @click="exportPlan">ファイルに書き出す</button>
         <button type="button" class="btn btn-danger" @click="remove">削除</button>
       </div>
+      <p class="muted">書き出したファイルをスマホなどに送り、トップ画面の「プランを読み込む」で開けます。</p>
       <p v-if="deleteError" class="notice notice-error" role="alert">{{ deleteError }}</p>
 
       <dl class="totals card">
@@ -195,6 +209,7 @@ async function remove() {
 <style scoped>
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

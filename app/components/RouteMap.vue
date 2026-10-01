@@ -1,94 +1,151 @@
 <script setup lang="ts">
-// 地図（Leaflet ＋ 地理院タイル）。渡されたルートの線と目印を描き、全体が収まる範囲を表示する
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+// 地図（MapLibre ＋ OpenFreeMap の Positron）。渡されたルートの線と目印を描き、全体が収まる範囲を表示する
+// 灰色の濃淡だけの地図にして、ルートの線を目立たせる（2026-10-02 に本人が地理院タイルから変更。設計書 §10.7）
+import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource, type StyleSpecification } from 'maplibre-gl'
+import 'maplibre-gl/dist/maplibre-gl.css'
+// 地図の計算を受け持つ worker。MapLibre は自分のファイルの隣から読み込もうとするが、ビルドすると場所が変わるので、
+// Vite に1つのファイルへまとめさせ、その URL を教える
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { MapPoint, MapRoute } from '~/types/map'
+
+setWorkerUrl(workerUrl)
 
 const props = defineProps<{ routes: MapRoute[]; points: MapPoint[] }>()
 const emit = defineEmits<{ 'rest-click': [id: string] }>()
 
-const JAPAN_CENTER: [number, number] = [36.5, 138]
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/positron'
+const JAPAN_CENTER: [number, number] = [138, 36.5] // 経度, 緯度
+// 動かせる範囲（日本の周り。南は沖縄・先島、北は北海道、東は南鳥島の手前まで）。スマホで指が滑って海の上で迷わないように
+const JAPAN_BOUNDS: [[number, number], [number, number]] = [
+  [122, 20],
+  [150, 46.5],
+]
 const POINT_ICONS = { home: '🏠', venue: '🏟', hotel: '🏨', stop: '📍', rest: '🅿️' }
 const POINT_LABELS = { home: '出発地', venue: '会場', hotel: '宿泊先', stop: '立ち寄り先', rest: '休憩の提案' }
+// 地図の画像を読み込めなかったときの、線と目印だけの地図
+const PLAIN_STYLE: StyleSpecification = { version: 8, sources: {}, layers: [{ id: 'background', type: 'background', paint: { 'background-color': '#f2f2f0' } }] }
 
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 }
 
-const el = ref<HTMLElement>()
-let map: L.Map | undefined
-let layer: L.LayerGroup | undefined
-
-function draw() {
-  if (!map || !layer) return
-  layer.clearLayers()
-  const bounds = L.latLngBounds([])
-
-  // 行きと帰りは同じ道を通ることが多いので、帰りを太く下に、行きを細く上に描いて両方見えるようにする
-  const ordered = [
-    ...props.routes.filter((r) => r.direction === 'return'),
-    ...props.routes.filter((r) => r.direction !== 'return'),
-  ]
-  const drawn = ordered.filter((route) => route.shape.length >= 2)
-  // 白い縁取りを先にすべて敷いてから線を重ねる（1本ずつ描くと、行きの縁取りが帰りの線を隠す）
-  for (const route of drawn) {
-    L.polyline(route.shape, { color: '#ffffff', weight: (route.direction === 'return' ? 10 : 5) + 6, opacity: 0.95 }).addTo(layer)
-  }
-  for (const route of drawn) {
-    const isReturn = route.direction === 'return'
-    const line = L.polyline(route.shape, {
-      color: isReturn ? '#e65100' : '#0d47a1',
-      weight: isReturn ? 10 : 5,
-      opacity: isReturn ? 0.75 : 1,
-    }).addTo(layer)
-    bounds.extend(line.getBounds())
-  }
-
-  for (const point of props.points) {
-    const position: [number, number] = [point.place.lat, point.place.lon]
-    const small = point.kind === 'rest' || point.kind === 'stop'
-    const size = small ? 28 : 36
-    const html = point.kind === 'rest' ? escapeHtml(point.label ?? '休') : `${point.icon ?? POINT_ICONS[point.kind]}${point.label ? `<b>${escapeHtml(point.label)}</b>` : ''}`
-    const marker = L.marker(position, {
-      icon: L.divIcon({
-        className: `map-pin map-pin-${point.kind}${small ? ' map-pin-small' : ''}`,
-        html,
-        iconSize: [size, size],
-        iconAnchor: [size / 2, size / 2],
-      }),
-      title: `${POINT_LABELS[point.kind]}: ${point.place.name}`,
-    }).addTo(layer)
-
-    if (point.kind === 'rest' && point.id) {
-      // 休憩候補の吹き出しは常に出しておき、押すと「ここで30分休憩する」と同じように立ち寄り先に入れる（仕様書 §4.8）
-      const id = point.id
-      marker
-        .bindTooltip(
-          `<span class="rest-tip-badge">${escapeHtml(point.label ?? '')} ${escapeHtml(point.note ?? '')}</span><br>${escapeHtml(point.place.name)}<br><span class="rest-tip-add">＋ここで30分休憩する</span>`,
-          { permanent: true, interactive: true, direction: 'top', offset: [0, -14], className: 'rest-tip' },
-        )
-        .on('click', () => emit('rest-click', id))
-      marker.getTooltip()?.on('click', () => emit('rest-click', id))
-    } else {
-      marker.bindTooltip(escapeHtml(`${POINT_LABELS[point.kind]}: ${point.place.name}`))
+// Positron の地名は「Nagaoka 長岡市」のようにローマ字と併記なので、日本語の名前だけにする
+async function loadStyle(): Promise<StyleSpecification | null> {
+  try {
+    const style = (await $fetch<StyleSpecification>(STYLE_URL, { retry: 0, timeout: 10_000 })) as StyleSpecification
+    for (const layer of style.layers) {
+      if (layer.type === 'symbol' && layer.layout?.['text-field']) layer.layout['text-field'] = ['coalesce', ['get', 'name:ja'], ['get', 'name']]
     }
-    bounds.extend(position)
+    return style
+  } catch {
+    return null
   }
-
-  if (bounds.isValid()) map.fitBounds(bounds, { padding: [32, 32], maxZoom: 14 })
-  else map.setView(JAPAN_CENTER, 5)
 }
 
-onMounted(() => {
-  map = L.map(el.value!)
-  // 標準地図だと色が濃くてルートの線が埋もれるので、淡色地図を使う
-  L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
-    minZoom: 5,
-    maxZoom: 18,
-    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener">地理院タイル</a>',
-  }).addTo(map)
-  layer = L.layerGroup().addTo(map)
-  draw()
+const el = ref<HTMLElement>()
+const styleFailed = ref(false)
+let map: MapLibreMap | undefined
+let ready = false
+let markers: Marker[] = []
+
+function pinElement(point: MapPoint): HTMLElement {
+  const small = point.kind === 'rest' || point.kind === 'stop'
+  const pin = document.createElement('div')
+  pin.className = `map-pin map-pin-${point.kind}${small ? ' map-pin-small' : ''}`
+  pin.innerHTML = point.kind === 'rest' ? escapeHtml(point.label ?? '休') : `${point.icon ?? POINT_ICONS[point.kind]}${point.label ? `<b>${escapeHtml(point.label)}</b>` : ''}`
+  return pin
+}
+
+function addMarker(point: MapPoint) {
+  if (!map) return
+  const position: [number, number] = [point.place.lon, point.place.lat]
+  const title = `${POINT_LABELS[point.kind]}: ${point.place.name}`
+  const pin = pinElement(point)
+
+  if (point.kind === 'rest' && point.id) {
+    // 休憩候補の吹き出しは常に出しておき、押すと「ここで30分休憩する」と同じように立ち寄り先に入れる（仕様書 §4.8）
+    const id = point.id
+    const wrap = document.createElement('div')
+    wrap.className = 'map-rest'
+    wrap.setAttribute('role', 'button')
+    wrap.tabIndex = 0
+    wrap.setAttribute('aria-label', `${point.place.name}で30分休憩する`)
+    wrap.innerHTML = `<span class="rest-tip"><span class="rest-tip-badge">${escapeHtml(point.label ?? '')} ${escapeHtml(point.note ?? '')}</span><br>${escapeHtml(point.place.name)}<br><span class="rest-tip-add">＋ここで30分休憩する</span></span>`
+    wrap.append(pin)
+    wrap.addEventListener('click', () => emit('rest-click', id))
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        emit('rest-click', id)
+      }
+    })
+    // 目印の中心がその地点に来るよう、下端から目印の半分（14px）ずらす
+    markers.push(new Marker({ element: wrap, anchor: 'bottom', offset: [0, 14] }).setLngLat(position).addTo(map))
+    return
+  }
+
+  pin.title = title
+  pin.setAttribute('aria-label', title)
+  const popup = new Popup({ offset: 20, closeButton: false }).setText(title)
+  markers.push(new Marker({ element: pin }).setLngLat(position).setPopup(popup).addTo(map))
+}
+
+function draw() {
+  if (!map || !ready) return
+  // 帰りを下に、行きを上に描く（同じ太さなので、同じ道を通るところは行きの線が見える）
+  const drawn = [...props.routes.filter((r) => r.direction === 'return'), ...props.routes.filter((r) => r.direction !== 'return')].filter((r) => r.shape.length >= 2)
+  ;(map.getSource('routes') as GeoJSONSource).setData({
+    type: 'FeatureCollection',
+    features: drawn.map((route) => ({
+      type: 'Feature',
+      properties: { direction: route.direction === 'return' ? 'return' : 'outbound' },
+      geometry: { type: 'LineString', coordinates: route.shape.map(([lat, lon]) => [lon, lat]) },
+    })),
+  })
+
+  for (const marker of markers) marker.remove()
+  markers = []
+  for (const point of props.points) addMarker(point)
+
+  const bounds = new LngLatBounds()
+  for (const route of drawn) for (const [lat, lon] of route.shape) bounds.extend([lon, lat])
+  for (const point of props.points) bounds.extend([point.place.lon, point.place.lat])
+  if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 32, maxZoom: 13, animate: false })
+  else map.jumpTo({ center: JAPAN_CENTER, zoom: 4 })
+}
+
+onMounted(async () => {
+  const style = await loadStyle()
+  if (!el.value) return // 読み込み中にページを離れた
+  styleFailed.value = style === null
+  map = new MapLibreMap({
+    container: el.value,
+    style: style ?? PLAIN_STYLE,
+    center: JAPAN_CENTER,
+    zoom: 4,
+    maxBounds: JAPAN_BOUNDS,
+    maxZoom: 17,
+    renderWorldCopies: false,
+    // 回転・傾きは使わない（北が上のまま）
+    dragRotate: false,
+    pitchWithRotate: false,
+    touchPitch: false,
+    attributionControl: { compact: false },
+  })
+  map.touchZoomRotate.disableRotation()
+  map.keyboard.disableRotation()
+  map.addControl(new NavigationControl({ showCompass: false }), 'top-left')
+  map.on('load', () => {
+    if (!map) return
+    map.addSource('routes', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    // 白い縁取りを先にすべて敷いてから線を重ねる（1本ずつ描くと、行きの縁取りが帰りの線を隠す）
+    map.addLayer({ id: 'route-casing', type: 'line', source: 'routes', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': 11, 'line-opacity': 0.95 } })
+    // 帰りも行きと同じ太さ（2026-10-02 本人の指示）
+    map.addLayer({ id: 'route-return', type: 'line', source: 'routes', filter: ['==', ['get', 'direction'], 'return'], layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#e65100', 'line-width': 5, 'line-opacity': 0.75 } })
+    map.addLayer({ id: 'route-outbound', type: 'line', source: 'routes', filter: ['==', ['get', 'direction'], 'outbound'], layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#0d47a1', 'line-width': 5 } })
+    ready = true
+    draw()
+  })
 })
 
 // 描く中身が変わったときだけ描き直す（時刻の入力のたびに表示範囲が動かないようにする）。
@@ -104,12 +161,15 @@ watch(signature, draw)
 onBeforeUnmount(() => {
   map?.remove()
   map = undefined
+  ready = false
+  markers = []
 })
 </script>
 
 <template>
   <div class="map-wrap">
     <div ref="el" class="map" role="application" aria-label="ルートの地図" />
+    <p v-if="styleFailed" class="notice notice-warn">地図の画像を読み込めなかったため、ルートの線と目印だけを出しています。</p>
     <p class="legend muted">
       <span class="swatch swatch-outbound" />行き
       <span class="swatch swatch-return" />帰り
@@ -124,16 +184,16 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-/* 地図の色味を落として、ルートの線と目印を目立たせる */
-.map :deep(.leaflet-tile-pane) {
-  filter: saturate(0.3) brightness(1.04);
-}
-
 .map {
   flex: 1;
   min-height: 320px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.notice {
+  margin-top: 6px;
 }
 
 .legend {
@@ -155,27 +215,34 @@ onBeforeUnmount(() => {
 }
 
 .swatch-return {
-  height: 10px;
+  height: 5px;
   margin-left: 12px;
   background: var(--color-return);
   opacity: 0.75;
 }
 </style>
 
-<!-- 目印は Leaflet が作る要素なので、scoped を付けないスタイルで指定する -->
+<!-- 目印は MapLibre が地図の上に置く要素なので、scoped を付けないスタイルで指定する -->
 <style>
+/* 位置は MapLibre が決める（position を指定すると、目印どうしが前の目印の高さ分ずれる） */
 .map-pin {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
   border: 2px solid #1f2933;
   border-radius: 50%;
   background: #fff;
   font-size: 20px;
   line-height: 1;
+  cursor: pointer;
 }
 
 .map-pin-small {
+  width: 28px;
+  height: 28px;
   font-size: 15px;
 }
 
@@ -201,10 +268,45 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.rest-tip {
+/* 休憩候補: 吹き出しを目印の上に常に出す */
+.map-rest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
+}
+
+.map-rest:focus-visible {
+  outline: none;
+}
+
+.map-rest:focus-visible .rest-tip {
+  outline: 3px solid #0d47a1;
+}
+
+.rest-tip {
+  position: relative;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  color: #1f2933;
   font-size: 12px;
   line-height: 1.5;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.rest-tip::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  margin-left: -6px;
+  border: 6px solid transparent;
+  border-top-color: #fff;
+  border-bottom: 0;
 }
 
 .rest-tip-badge {
@@ -215,5 +317,10 @@ onBeforeUnmount(() => {
 .rest-tip-add {
   font-weight: 700;
   color: #0d47a1;
+}
+
+.maplibregl-popup-content {
+  padding: 6px 10px;
+  font-size: 13px;
 }
 </style>

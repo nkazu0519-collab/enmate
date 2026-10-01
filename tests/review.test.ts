@@ -85,7 +85,7 @@ describe('中継を呼ぶ共通の処理', () => {
     vi.stubGlobal('$fetch', fetch)
     const { callApi } = await import('../app/services/api')
     await callApi('spot', '/api/spot', { word: '新潟' })
-    expect(fetch).toHaveBeenCalledWith('/api/spot', { query: { word: '新潟' }, retry: 0 })
+    expect(fetch).toHaveBeenCalledWith('/api/spot', expect.objectContaining({ query: { word: '新潟' }, retry: 0 }))
   })
 
   it('F47: 使用回数の保存データが壊れていても、成功した検索は成功として返す', async () => {

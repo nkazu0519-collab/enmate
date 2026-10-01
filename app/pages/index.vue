@@ -1,16 +1,57 @@
 <script setup lang="ts">
 // トップ画面。これからの遠征をチケットとして並べ、終わった遠征は半券としてたたんでしまっておく
-import { daysBetween, formatDateJa, formatDistance, formatYen, timeFromDate, todayLocal } from '~/utils/datetime'
+import { daysBetween, formatDateJa, formatDistance, formatTimestamp, formatYen, timeFromDate, todayLocal } from '~/utils/datetime'
 import { collectionTotals, countdownOf, groupByYear, homeTimes, planTotals, stayLabel } from '~/utils/planSummary'
-import { loadPlans, splitForList } from '~/utils/planStore'
+import { MAX_FILE_BYTES, readPlanFile } from '~/utils/planFile'
+import { findPlan, loadPlans, savePlan, splitForList } from '~/utils/planStore'
 
 useHead({ title: 'えんメイト' })
 
 const today = todayLocal()
-const { plans: loaded, problem } = loadPlans()
-const { upcoming, done } = splitForList(loaded, today)
-const totals = collectionTotals(done)
-const years = groupByYear(done)
+const store = ref(loadPlans())
+const loaded = computed(() => store.value.plans)
+const problem = computed(() => store.value.problem)
+const list = computed(() => splitForList(loaded.value, today))
+const upcoming = computed(() => list.value.upcoming)
+const done = computed(() => list.value.done)
+const totals = computed(() => collectionTotals(done.value))
+const years = computed(() => groupByYear(done.value))
+
+// 書き出したファイルからプランを読み込む（設計書 §5.2）。同じプランがあれば、上書きしてよいか確かめる
+const fileInput = ref<HTMLInputElement | null>(null)
+const importMessage = ref<{ ok: boolean; text: string; id?: string } | null>(null)
+
+async function importFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 同じファイルをもう一度選んでも読み込めるように
+  if (!file) return
+  if (file.size > MAX_FILE_BYTES) {
+    importMessage.value = { ok: false, text: 'ファイルが大きすぎます。えんメイトで書き出したファイルを選んでください。' }
+    return
+  }
+  const result = readPlanFile(await file.text())
+  if (!result.ok) {
+    importMessage.value = { ok: false, text: result.message }
+    return
+  }
+  const { plan } = result
+  const existing = findPlan(plan.id)
+  if (
+    existing &&
+    !window.confirm(
+      `「${existing.name}」はすでに保存されています。読み込んだファイルの内容（${formatTimestamp(plan.updatedAt)} 保存）で上書きしますか？\n今の内容は ${formatTimestamp(existing.updatedAt)} 保存です。`,
+    )
+  ) {
+    return
+  }
+  if (!savePlan(plan)) {
+    importMessage.value = { ok: false, text: '保存できませんでした。ブラウザの保存領域がいっぱいか、使えない設定になっています。' }
+    return
+  }
+  store.value = loadPlans()
+  importMessage.value = { ok: true, text: `「${plan.name}」を${existing ? '上書きして' : ''}読み込みました。`, id: plan.id }
+}
 
 function stubDate(matchDate: string): string {
   const [, mo = '', d = ''] = matchDate.split('-')
@@ -118,6 +159,16 @@ function stubDate(matchDate: string): string {
           </section>
         </div>
       </details>
+
+      <section class="import">
+        <button type="button" class="import-btn" @click="fileInput?.click()">📂 プランを読み込む</button>
+        <input ref="fileInput" type="file" accept=".json,application/json" hidden @change="importFile">
+        <p class="import-note">ほかの端末で「ファイルに書き出す」をしたプランを、この端末に追加します。</p>
+        <p v-if="importMessage" class="notice" :class="importMessage.ok ? 'notice-info' : 'notice-error'" role="status">
+          {{ importMessage.text }}
+          <NuxtLink v-if="importMessage.id" :to="`/plans/${importMessage.id}`">開く</NuxtLink>
+        </p>
+      </section>
 
       <div class="usage-wrap">
         <UsageNote />
@@ -679,6 +730,37 @@ function stubDate(matchDate: string): string {
   text-align: center;
   opacity: 0.8;
   transform: rotate(14deg);
+}
+
+/* ===== 読み込み ===== */
+.import {
+  margin-top: 28px;
+}
+
+.import-btn {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 1px dashed var(--lime);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--lime);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.import-btn:hover {
+  background: rgba(182, 255, 59, 0.08);
+}
+
+.import-note {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: #7c86ad;
+}
+
+.import .notice {
+  margin-top: 10px;
 }
 
 /* 暗い背景の上でも読めるよう、使用回数の文字を明るくする */

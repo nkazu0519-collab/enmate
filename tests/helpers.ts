@@ -40,6 +40,13 @@ export function formOf(overrides: Partial<PlanForm> = {}): PlanForm {
     exitMinutes: 45,
     stops: {},
     restIntervalMinutes: 120,
+    stayBefore: false,
+    hotelBefore: null,
+    hotelBeforeArriveBy: '18:00',
+    stayAfter: false,
+    sameHotel: true,
+    hotelAfter: null,
+    hotelAfterDepartAt: '10:00',
     ...overrides,
   }
 }

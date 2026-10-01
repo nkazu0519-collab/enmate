@@ -1,8 +1,6 @@
 // ルート検索（車）の中継。このアプリで使う項目だけを通す（設計書 §9.2）。
 
 const HOST = 'navitime-route-car.p.rapidapi.com'
-const COORD = /^-?\d{1,3}(\.\d+)?,-?\d{1,3}(\.\d+)?$/
-const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/
 const MAX_VIA = 50
 const MAX_STAY = 720
 // 寄る順番を最適にするとき（via_type=optimal）は、経由地10か所・滞在の合計300分まで（NAVITIME の仕様）
@@ -50,8 +48,8 @@ export default defineEventHandler(async (event) => {
   const viaType = String(query.via_type ?? '')
 
   // 到着時刻と出発時刻は、どちらか片方だけを指定する（NAVITIME の仕様）
-  const timeOk = TIME.test(goalTime) !== TIME.test(startTime) && (goalTime === '' || startTime === '')
-  if (!COORD.test(start) || !COORD.test(goal) || !timeOk || via === null || !optimalOk(viaType, via)) {
+  const timeOk = isLocalTime(goalTime) !== isLocalTime(startTime) && (goalTime === '' || startTime === '')
+  if (!isCoord(start) || !isCoord(goal) || !timeOk || via === null || !optimalOk(viaType, via)) {
     throw createError({ statusCode: 400, message: 'badRequest', data: { kind: 'badRequest' } })
   }
 

@@ -5,7 +5,7 @@ type Point = [number, number] // 緯度, 経度
 const METERS_PER_DEGREE = 111_320
 
 // 点 p から線分 a-b までの距離（メートル）。狭い範囲なので平面とみなして計算する
-function distanceToSegment(p: Point, a: Point, b: Point): number {
+export function distanceToSegment(p: Point, a: Point, b: Point): number {
   const scaleX = Math.cos((a[0] * Math.PI) / 180) * METERS_PER_DEGREE
   const px = (p[1] - a[1]) * scaleX
   const py = (p[0] - a[0]) * METERS_PER_DEGREE

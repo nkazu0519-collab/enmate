@@ -1,5 +1,7 @@
 // プランの保存と読み込み（localStorage）。
 import type { Plan } from '../types/plan'
+import { clearCache } from './apiCache'
+import { addDays, datePart } from './datetime'
 import { browserStore } from './storage'
 
 const KEY = 'enmate:plans'
@@ -13,6 +15,15 @@ function isPlace(v: unknown): boolean {
   return !!p && typeof p.name === 'string' && typeof p.lat === 'number' && typeof p.lon === 'number'
 }
 
+// 区間の、画面で使う項目。計算結果は無くてもよいが、あるなら時刻と線の形がそろっていること
+function isLeg(v: unknown): boolean {
+  const l = v as Record<string, unknown> | null
+  if (!l || typeof l.id !== 'string' || typeof l.label !== 'string' || !isPlace(l.from) || !isPlace(l.to) || !Array.isArray(l.stops)) return false
+  if (!l.stops.every((s) => isPlace((s as Record<string, unknown> | null)?.place))) return false
+  const r = l.result as Record<string, unknown> | undefined
+  return r === undefined || (typeof r.departAt === 'string' && typeof r.arriveAt === 'string' && Array.isArray(r.shape) && Array.isArray(r.restAreas))
+}
+
 export function isPlan(v: unknown): v is Plan {
   const p = v as Record<string, unknown> | null
   return (
@@ -23,7 +34,12 @@ export function isPlan(v: unknown): v is Plan {
     typeof p.matchDate === 'string' &&
     isPlace(p.home) &&
     isPlace(p.venue) &&
-    Array.isArray(p.legs)
+    Array.isArray(p.hotelsBefore) &&
+    p.hotelsBefore.every(isPlace) &&
+    Array.isArray(p.hotelsAfter) &&
+    p.hotelsAfter.every(isPlace) &&
+    Array.isArray(p.legs) &&
+    p.legs.every(isLeg)
   )
 }
 
@@ -59,11 +75,19 @@ export function loadPlans(store: Storage | null = browserStore()): { plans: Plan
 
 function writePlans(plans: Plan[], store: Storage | null): boolean {
   if (!store) return false
+  const raw = JSON.stringify(plans)
   try {
-    store.setItem(KEY, JSON.stringify(plans))
+    store.setItem(KEY, raw)
     return true
   } catch {
-    return false
+    // 保存領域がいっぱいなら、API の結果の使い回し用のデータ（消しても検索し直せる）を消して、もう一度だけ試す
+    try {
+      clearCache(store)
+      store.setItem(KEY, raw)
+      return true
+    } catch {
+      return false
+    }
   }
 }
 
@@ -85,9 +109,15 @@ export function findPlan(id: string, store: Storage | null = browserStore()): Pl
   return loadPlans(store).plans.find((p) => p.id === id)
 }
 
-// 一覧の分け方。試合日が今日以降なら「これから」（近い順）、昨日までなら「完了済み」（新しい順）
+// 遠征が終わる日。最後の区間の到着日（夜中に家へ着けば、その日）。計算していなければ、試合日に後泊の泊数を足した日
+export function tripEndDate(plan: Plan): string {
+  const arriveAt = plan.legs[plan.legs.length - 1]?.result?.arriveAt
+  return arriveAt ? datePart(arriveAt) : addDays(plan.matchDate, plan.hotelsAfter.length)
+}
+
+// 一覧の分け方。すべての区間が終わる日が今日以降なら「これから」（試合日の近い順）、昨日までなら「完了済み」（試合日の新しい順）
 export function splitForList(plans: Plan[], today: string): { upcoming: Plan[]; done: Plan[] } {
-  const upcoming = plans.filter((p) => p.matchDate >= today).sort((a, b) => a.matchDate.localeCompare(b.matchDate))
-  const done = plans.filter((p) => p.matchDate < today).sort((a, b) => b.matchDate.localeCompare(a.matchDate))
+  const upcoming = plans.filter((p) => tripEndDate(p) >= today).sort((a, b) => a.matchDate.localeCompare(b.matchDate))
+  const done = plans.filter((p) => tripEndDate(p) < today).sort((a, b) => b.matchDate.localeCompare(a.matchDate))
   return { upcoming, done }
 }

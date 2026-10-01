@@ -8,8 +8,8 @@ const props = defineProps<{ routes: MapRoute[]; points: MapPoint[] }>()
 const emit = defineEmits<{ 'rest-click': [id: string] }>()
 
 const JAPAN_CENTER: [number, number] = [36.5, 138]
-const POINT_ICONS = { home: '🏠', venue: '🏟', stop: '📍', rest: '🅿️' }
-const POINT_LABELS = { home: '出発地', venue: '会場', stop: '立ち寄り先', rest: '休憩の提案' }
+const POINT_ICONS = { home: '🏠', venue: '🏟', hotel: '🏨', stop: '📍', rest: '🅿️' }
+const POINT_LABELS = { home: '出発地', venue: '会場', hotel: '宿泊先', stop: '立ち寄り先', rest: '休憩の提案' }
 
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
@@ -70,7 +70,7 @@ function draw() {
         .on('click', () => emit('rest-click', id))
       marker.getTooltip()?.on('click', () => emit('rest-click', id))
     } else {
-      marker.bindTooltip(`${POINT_LABELS[point.kind]}: ${point.place.name}`)
+      marker.bindTooltip(escapeHtml(`${POINT_LABELS[point.kind]}: ${point.place.name}`))
     }
     bounds.extend(position)
   }
@@ -91,11 +91,12 @@ onMounted(() => {
   draw()
 })
 
-// 描く中身が変わったときだけ描き直す（時刻の入力のたびに表示範囲が動かないようにする）
+// 描く中身が変わったときだけ描き直す（時刻の入力のたびに表示範囲が動かないようにする）。
+// 線は点をすべて比べ（両端と点の数が同じで、途中だけ違うルートもある）、目印は絵と番号も比べる（立ち寄り先の種類を変えたとき）
 const signature = computed(() =>
   [
-    ...props.routes.map((r) => `${r.id}:${r.shape.length}:${r.shape[0]}:${r.shape.at(-1)}`),
-    ...props.points.map((p) => `${p.kind}:${p.place.lat},${p.place.lon}`),
+    ...props.routes.map((r) => `${r.id}:${r.direction}:${r.shape.join(';')}`),
+    ...props.points.map((p) => `${p.kind}:${p.place.lat},${p.place.lon}:${p.icon ?? ''}:${p.label ?? ''}:${p.note ?? ''}:${p.place.name}`),
   ].join('|'),
 )
 watch(signature, draw)

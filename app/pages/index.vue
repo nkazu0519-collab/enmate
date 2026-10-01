@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // トップ画面。これからの遠征をチケットとして並べ、終わった遠征は半券としてたたんでしまっておく
 import { daysBetween, formatDateJa, formatDistance, formatYen, timeFromDate, todayLocal } from '~/utils/datetime'
-import { collectionTotals, groupByYear, homeTimes, planTotals } from '~/utils/planSummary'
+import { collectionTotals, countdownOf, groupByYear, homeTimes, planTotals, stayLabel } from '~/utils/planSummary'
 import { loadPlans, splitForList } from '~/utils/planStore'
 
 useHead({ title: 'えんメイト' })
@@ -59,7 +59,7 @@ function stubDate(matchDate: string): string {
           <li v-for="plan in upcoming" :key="plan.id">
             <NuxtLink :to="`/plans/${plan.id}`" class="ticket">
               <div class="ticket-main">
-                <p class="ticket-date">{{ formatDateJa(plan.matchDate) }}</p>
+                <p class="ticket-date">{{ formatDateJa(plan.matchDate) }}<small v-if="plan.hotelsBefore.length + plan.hotelsAfter.length > 0" class="ticket-stay">{{ stayLabel(plan) }}</small></p>
                 <p class="ticket-name">{{ plan.name }}</p>
                 <p class="ticket-meta">{{ plan.home.name }} → {{ plan.venue.name }}</p>
                 <p v-if="homeTimes(plan).departAt" class="ticket-meta">
@@ -68,8 +68,11 @@ function stubDate(matchDate: string): string {
                 </p>
               </div>
               <div class="ticket-stub">
-                <template v-if="daysBetween(today, plan.matchDate) === 0">
+                <template v-if="countdownOf(today, plan.matchDate).kind === 'today'">
                   <span class="stub-small">いよいよ</span><span class="stub-num stub-today">今日</span>
+                </template>
+                <template v-else-if="countdownOf(today, plan.matchDate).kind === 'during'">
+                  <span class="stub-small">帰り着くまで</span><span class="stub-num stub-during">遠征中</span>
                 </template>
                 <template v-else>
                   <span class="stub-small">あと</span>
@@ -385,6 +388,14 @@ function stubDate(matchDate: string): string {
   color: #7a7f93;
 }
 
+.ticket-stay {
+  margin-left: 8px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  letter-spacing: 0;
+}
+
 .ticket-name {
   font-weight: 900;
   font-size: 1.05rem;
@@ -429,6 +440,12 @@ function stubDate(matchDate: string): string {
 
 .stub-today {
   font-size: 1.3rem;
+}
+
+/* 3文字なので「今日」より小さくして、半券の幅に収める */
+.stub-during {
+  font-size: 1rem;
+  white-space: nowrap;
 }
 
 .stub-unit {

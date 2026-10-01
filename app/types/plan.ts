@@ -76,8 +76,10 @@ export type Plan = {
   matchEnd: string // HH:mm
   exitMinutes: number
   restIntervalMinutes: number
-  hotelsBefore: Hotel[] // 前泊（試合日に近い順）
-  hotelsAfter: Hotel[] // 後泊
+  hotelsBefore: Hotel[] // 前泊（試合日に近い順）。今は1泊まで
+  hotelsAfter: Hotel[] // 後泊。今は1泊まで。前日と同じ宿泊先に泊まるときは前泊と同じ場所が入る
+  hotelBeforeArriveBy?: string // HH:mm 前日に宿泊先へ着く時刻（段階2までに保存したプランには無い）
+  hotelAfterDepartAt?: string // HH:mm 翌日に宿泊先を出る時刻（同上）
   legs: Leg[]
   createdAt: string
   updatedAt: string
@@ -95,4 +97,13 @@ export type PlanForm = {
   exitMinutes: number
   stops: Record<string, Stop[]> // 区間の ID ごとの立ち寄り先
   restIntervalMinutes: number
+  // 前泊（仕様書 §4.4）。泊まると決めても、宿泊先はあとから選べる（それまで行きは計算しない）
+  stayBefore: boolean
+  hotelBefore: Place | null
+  hotelBeforeArriveBy: string // HH:mm 前日に宿泊先へ着く時刻
+  // 後泊。前泊もしているときは、前日と同じ宿泊先に泊まれる（sameHotel）
+  stayAfter: boolean
+  sameHotel: boolean
+  hotelAfter: Place | null
+  hotelAfterDepartAt: string // HH:mm 翌日に宿泊先を出る時刻
 }

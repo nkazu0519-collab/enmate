@@ -10,6 +10,6 @@ export function notifyUsageChanged() {
 export function useUsage() {
   return computed(() => {
     void version.value
-    return { route: readUsage('route'), spot: readUsage('spot') }
+    return { route: readUsage('route'), spot: readUsage('spot'), geocoding: readUsage('geocoding') }
   })
 }

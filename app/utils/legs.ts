@@ -1,6 +1,6 @@
 // 入力した条件から、区間（行き・帰り）を組み立てる。ここでは API を呼ばない。
 import type { Leg, LegResult, Place, PlanForm, Stop, StopKind } from '../types/plan'
-import { addMinutes, formatMonthDay, toLocalIso } from './datetime'
+import { addDays, addMinutes, datePart, formatMonthDay, timePart, toLocalIso } from './datetime'
 
 const TIME_PATTERN = /^\d{2}:\d{2}$/
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -11,6 +11,13 @@ export const MAX_STAY_MINUTES = 720
 export const STAY_STEP_MINUTES = 10
 // 休憩間隔の選択肢（仕様書 §4.8）
 export const REST_INTERVAL_OPTIONS = [90, 120, 150]
+// 前日に宿泊先へ着く時刻・翌日に宿泊先を出る時刻の初期値（仕様書 §4.2）
+export const DEFAULT_HOTEL_ARRIVE_BY = '18:00'
+export const DEFAULT_HOTEL_DEPART_AT = '10:00'
+
+// 区間の ID（走る順）。before: 前日に宿泊先へ / outbound: 会場に着く区間 / return: 試合後に会場を出る区間 / after: 翌日の帰り
+export type LegId = 'before' | 'outbound' | 'return' | 'after'
+const LEG_ORDER: LegId[] = ['before', 'outbound', 'return', 'after']
 
 export const STOP_KIND_LABELS: Record<StopKind, string> = { sightseeing: '観光', meal: '食事', rest: '休憩', other: 'その他' }
 export const STOP_KIND_ICONS: Record<StopKind, string> = { sightseeing: '📷', meal: '🍴', rest: '☕', other: '📍' }
@@ -50,58 +57,167 @@ function samePlace(a: Place, b: Place): boolean {
   return a.lat.toFixed(5) === b.lat.toFixed(5) && a.lon.toFixed(5) === b.lon.toFixed(5)
 }
 
-// 計算の前の入力チェック。問題がなければ空の配列を返す
-export function validateForm(form: PlanForm): string[] {
+// 試合後に泊まる宿泊先。前日と同じ宿泊先に泊まるときは前日の宿泊先
+export function hotelAfterOf(form: PlanForm): Place | null {
+  if (!form.stayAfter) return null
+  return form.stayBefore && form.sameHotel ? form.hotelBefore : form.hotelAfter
+}
+
+// 区間の名前（仕様書 §4.3）
+export function legLabelOf(form: PlanForm, id: LegId): string {
+  if (id === 'before') return '前日に宿泊先へ'
+  if (id === 'outbound') return form.stayBefore ? '当日の行き' : '行き'
+  if (id === 'return') return form.stayAfter ? '試合後に宿泊先へ' : '帰り'
+  return '翌日の帰り'
+}
+
+// 今の条件で使う区間の ID（走る順）
+export function legIdsOf(form: PlanForm): LegId[] {
+  return LEG_ORDER.filter((id) => (id !== 'before' || form.stayBefore) && (id !== 'after' || form.stayAfter))
+}
+
+// 行きの区間（会場に着くまで）か、帰りの区間（会場を出てから）か
+export function sideOf(id: string): 'outbound' | 'return' {
+  return id === 'before' || id === 'outbound' ? 'outbound' : 'return'
+}
+
+// 行き・帰りの両方に関わる条件の誤り
+function commonErrors(form: PlanForm): string[] {
   const errors: string[] = []
   if (!form.home) errors.push('出発地を検索して選んでください')
   if (!form.venue) errors.push('会場を検索して選んでください')
   if (!DATE_PATTERN.test(form.matchDate)) errors.push('試合日を入れてください')
+  if (form.home && form.venue && samePlace(form.home, form.venue)) {
+    errors.push('出発地と会場が同じ場所です。どちらかを選び直してください')
+  }
+  return errors
+}
+
+// 行きだけに関わる条件の誤り（仕様書 §4.7。帰りが途中でも、行きだけは計算・確定できる）
+function outboundErrors(form: PlanForm): string[] {
+  const errors: string[] = []
   if (!TIME_PATTERN.test(form.arriveBy)) errors.push('会場に着きたい時刻を入れてください')
+  if (form.stayBefore) {
+    if (!form.hotelBefore) errors.push('前日の宿泊先を「宿泊先を選ぶ」から選んでください')
+    if (!TIME_PATTERN.test(form.hotelBeforeArriveBy)) errors.push('前日に宿泊先へ着く時刻を入れてください')
+  }
+  return errors
+}
+
+// 帰りだけに関わる条件の誤り
+function returnErrors(form: PlanForm): string[] {
+  const errors: string[] = []
   if (!TIME_PATTERN.test(form.matchEnd)) errors.push('試合の終了時刻を入れてください')
   if (!Number.isInteger(form.exitMinutes) || form.exitMinutes < 0 || form.exitMinutes > MAX_EXIT_MINUTES) {
     errors.push(`会場を出るまでの時間は、0〜${MAX_EXIT_MINUTES}分で入れてください`)
   }
-  if (form.home && form.venue && samePlace(form.home, form.venue)) {
-    errors.push('出発地と会場が同じ場所です。どちらかを選び直してください')
-  }
   if (TIME_PATTERN.test(form.arriveBy) && TIME_PATTERN.test(form.matchEnd) && form.matchEnd <= form.arriveBy) {
     errors.push('試合の終了時刻は、会場に着きたい時刻より後にしてください')
   }
-  for (const [legId, stops] of Object.entries(form.stops)) {
-    const label = legId === 'return' ? '帰り' : '行き'
-    if (stops.length > MAX_STOPS) errors.push(`${label}の立ち寄り先は、${MAX_STOPS}か所までにしてください`)
-    for (const stop of stops) {
-      if (!Number.isInteger(stop.stayMinutes) || stop.stayMinutes < 0 || stop.stayMinutes > MAX_STAY_MINUTES) {
-        errors.push(`${label}の「${stop.place.name}」の滞在時間は、0〜${MAX_STAY_MINUTES}分で入れてください`)
-      }
+  if (form.stayAfter) {
+    if (!hotelAfterOf(form)) {
+      errors.push(
+        form.stayBefore && form.sameHotel ? '前日の宿泊先を選ぶと、試合後も同じ宿泊先に泊まります' : '試合後の宿泊先を「宿泊先を選ぶ」から選んでください',
+      )
+    }
+    if (!TIME_PATTERN.test(form.hotelAfterDepartAt)) errors.push('翌日に宿泊先を出る時刻を入れてください')
+  }
+  return errors
+}
+
+// 条件の誤り（立ち寄り先を除く）。side を渡すと、その側に関わるものだけ
+export function conditionErrors(form: PlanForm, side?: 'outbound' | 'return'): string[] {
+  return [
+    ...commonErrors(form),
+    ...(side !== 'return' ? outboundErrors(form) : []),
+    ...(side !== 'outbound' ? returnErrors(form) : []),
+  ]
+}
+
+// 区間の立ち寄り先の誤り
+export function stopErrors(form: PlanForm, legId: LegId): string[] {
+  const stops = form.stops[legId] ?? []
+  const label = legLabelOf(form, legId)
+  const errors: string[] = []
+  if (stops.length > MAX_STOPS) errors.push(`${label}の立ち寄り先は、${MAX_STOPS}か所までにしてください`)
+  for (const stop of stops) {
+    if (!Number.isInteger(stop.stayMinutes) || stop.stayMinutes < 0 || stop.stayMinutes > MAX_STAY_MINUTES) {
+      errors.push(`${label}の「${stop.place.name}」の滞在時間は、0〜${MAX_STAY_MINUTES}分で入れてください`)
     }
   }
   return errors
 }
 
-// 日帰りの2区間。入力チェックを通った条件で呼ぶ
+// 計算の前の入力チェック。問題がなければ空の配列を返す
+export function validateForm(form: PlanForm): string[] {
+  return [...conditionErrors(form), ...legIdsOf(form).flatMap((id) => stopErrors(form, id))]
+}
+
+// 区間を組み立てる（仕様書 §4.3）。行きと帰りは別々に確かめ、条件がそろっている側の区間だけを返す。
+// 立ち寄り先の誤りは区間ごとに確かめるので、ここでは見ない
 export function buildLegs(form: PlanForm): Leg[] {
-  if (!form.home || !form.venue) return []
-  return [
-    {
-      id: 'outbound',
-      label: '行き',
-      from: form.home,
-      to: form.venue,
-      timeRule: 'arriveBy',
-      time: toLocalIso(form.matchDate, form.arriveBy),
-      stops: form.stops.outbound ?? [],
-    },
-    {
-      id: 'return',
-      label: '帰り',
-      from: form.venue,
-      to: form.home,
-      timeRule: 'departAt',
-      time: addMinutes(toLocalIso(form.matchDate, form.matchEnd), form.exitMinutes),
-      stops: form.stops.return ?? [],
-    },
-  ]
+  const { home, venue } = form
+  if (!home || !venue || commonErrors(form).length > 0) return []
+  const hotelBefore = form.stayBefore ? form.hotelBefore : null
+  const hotelAfter = hotelAfterOf(form)
+  const leg = (id: LegId, from: Place, to: Place, timeRule: Leg['timeRule'], time: string): Leg => ({
+    id,
+    label: legLabelOf(form, id),
+    from,
+    to,
+    timeRule,
+    time,
+    stops: form.stops[id] ?? [],
+  })
+
+  const legs: Leg[] = []
+  if (outboundErrors(form).length === 0) {
+    if (hotelBefore) {
+      legs.push(leg('before', home, hotelBefore, 'arriveBy', toLocalIso(addDays(form.matchDate, -1), form.hotelBeforeArriveBy)))
+    }
+    legs.push(leg('outbound', hotelBefore ?? home, venue, 'arriveBy', toLocalIso(form.matchDate, form.arriveBy)))
+  }
+  if (returnErrors(form).length === 0) {
+    legs.push(leg('return', venue, hotelAfter ?? home, 'departAt', addMinutes(toLocalIso(form.matchDate, form.matchEnd), form.exitMinutes)))
+    if (hotelAfter) {
+      legs.push(leg('after', hotelAfter, home, 'departAt', toLocalIso(addDays(form.matchDate, 1), form.hotelAfterDepartAt)))
+    }
+  }
+  return legs
+}
+
+// 宿泊をやめるとき、なくなる区間の立ち寄り先を、残る区間へ走る順につなげて移す（仕様書 §4.4）
+export function stopsAfterDroppingStay(stops: Record<string, Stop[]>, side: 'before' | 'after'): Record<string, Stop[]> {
+  if (side === 'before') return { ...stops, outbound: [...(stops.before ?? []), ...(stops.outbound ?? [])], before: [] }
+  return { ...stops, return: [...(stops.return ?? []), ...(stops.after ?? [])], after: [] }
+}
+
+// 立ち寄り先のおすすめを探す場所と、入れる位置の初期値（仕様書 §4.5 の表）。宿泊先が決まっていなければ center は null
+export function stopSearchOf(form: PlanForm, legId: LegId): { center: Place | null; position: 'first' | 'last' } {
+  if (legId === 'before') return { center: form.hotelBefore, position: 'last' }
+  if (legId === 'outbound') return { center: form.venue, position: 'last' }
+  if (legId === 'return') return { center: form.venue, position: 'first' }
+  return { center: hotelAfterOf(form), position: 'first' }
+}
+
+// 宿泊先を選ぶ画面で、通る都道府県を調べるルート（仕様書 §4.4）。前泊は自宅→会場、後泊は会場→自宅。
+// 立ち寄り先は入れない。宿泊する前のおおまかなプランと同じ条件になるので、そのときの検索結果を使い回せる
+export function stayRouteLeg(form: PlanForm, side: 'before' | 'after'): Leg | null {
+  const { home, venue } = form
+  if (!home || !venue) return null
+  if (side === 'before') {
+    if (!DATE_PATTERN.test(form.matchDate) || !TIME_PATTERN.test(form.arriveBy)) return null
+    return { id: 'stayRoute', label: '', from: home, to: venue, timeRule: 'arriveBy', time: toLocalIso(form.matchDate, form.arriveBy), stops: [] }
+  }
+  if (returnErrors({ ...form, stayAfter: false }).length > 0 || !DATE_PATTERN.test(form.matchDate)) return null
+  const time = addMinutes(toLocalIso(form.matchDate, form.matchEnd), form.exitMinutes)
+  return { id: 'stayRoute', label: '', from: venue, to: home, timeRule: 'departAt', time, stops: [] }
+}
+
+// 同じ出発地・到着地の計算結果があれば、そのルートの形を使う（時刻や立ち寄り先が違っても、通る都道府県を調べるには足りる）
+export function shapeBetween(results: LegResult[], from: Place, to: Place): [number, number][] | null {
+  const prefix = `${from.lat},${from.lon}|${to.lat},${to.lon}|`
+  return results.find((r) => r.inputHash.startsWith(prefix))?.shape ?? null
 }
 
 // 寄る順番の最適化（仕様書にない追加）。NAVITIME の最適順は、経由地10か所・滞在の合計300分まで
@@ -143,6 +259,26 @@ export type LegStatus = 'calculated' | 'stale' | 'none'
 export function legStatus(leg: Leg, result: LegResult | undefined): LegStatus {
   if (!result) return 'none'
   return result.inputHash === legInputHash(leg) ? 'calculated' : 'stale'
+}
+
+// 続けて走る区間の時刻の前後。前の区間で着く時刻が、次の区間で出る時刻より後なら誤り
+// （例: 試合後に宿へ着くのが翌 00:45 なのに、翌日に宿を出る時刻が 00:00）。計算し終わった区間どうしだけを比べる
+export function orderErrors(legs: Leg[], results: Record<string, LegResult | undefined>): string[] {
+  const errors: string[] = []
+  for (let i = 1; i < legs.length; i++) {
+    const prev = legs[i - 1]!
+    const next = legs[i]!
+    const arrive = results[prev.id]
+    const depart = results[next.id]
+    if (!arrive || !depart || legStatus(prev, arrive) !== 'calculated' || legStatus(next, depart) !== 'calculated') continue
+    if (arrive.arriveAt > depart.departAt) {
+      const at = (iso: string) => `${formatMonthDay(datePart(iso))} ${timePart(iso)}`
+      errors.push(
+        `「${prev.label}」で${prev.to.name}に着くのが ${at(arrive.arriveAt)} で、「${next.label}」で出る ${at(depart.departAt)} より後です。時刻を見直してください`,
+      )
+    }
+  }
+  return errors
 }
 
 // プラン名を空のまま保存したときの名前

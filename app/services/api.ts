@@ -13,7 +13,11 @@ export class ApiError extends Error {
   }
 }
 
-const API_LABELS: Record<ApiName, string> = { route: 'ルート検索（NAVITIME Route(car)）', spot: '場所検索（NAVITIME Spot）' }
+const API_LABELS: Record<ApiName, string> = {
+  route: 'ルート検索（NAVITIME Route(car)）',
+  spot: '場所検索（NAVITIME Spot）',
+  geocoding: '住所の検索（NAVITIME Geocoding）',
+}
 
 function messageFor(api: ApiName, kind: ApiErrorKind): string {
   switch (kind) {
@@ -38,20 +42,28 @@ function messageFor(api: ApiName, kind: ApiErrorKind): string {
 
 type UsageHeader = { remaining: number | null; limit: number | null }
 
-export async function callApi<T>(api: ApiName, path: string, query: Record<string, string>): Promise<T> {
+// 使用回数を記録する。記録できなくても（保存データが壊れているなど）、検索の結果はそのまま使う
+function record(api: ApiName, header: UsageHeader) {
   try {
-    const res = (await $fetch<unknown>(path, { query })) as T & UsageHeader
-    recordCall(api, res)
-    notifyUsageChanged()
-    return res
+    recordCall(api, header)
+  } catch {
+    // 数えられないだけ
+  }
+  notifyUsageChanged()
+}
+
+export async function callApi<T>(api: ApiName, path: string, query: Record<string, string>): Promise<T> {
+  let res: T & UsageHeader
+  try {
+    // 失敗しても自動ではもう一度呼ばない（$fetch は 429・502 などで1回呼び直し、無料枠を2回使ってしまう）
+    res = (await $fetch<unknown>(path, { query, retry: 0 })) as T & UsageHeader
   } catch (e) {
     // サーバー側の中継が返した失敗の種類。応答そのものがなければ通信の失敗
     const data = (e as { data?: { data?: Partial<UsageHeader> & { kind?: ApiErrorKind; reached?: boolean } } }).data?.data
-    if (data?.reached) {
-      recordCall(api, { remaining: data.remaining ?? null, limit: data.limit ?? null })
-      notifyUsageChanged()
-    }
+    if (data?.reached) record(api, { remaining: data.remaining ?? null, limit: data.limit ?? null })
     const kind = data?.kind ?? 'network'
     throw new ApiError(kind, messageFor(api, kind))
   }
+  record(api, res)
+  return res
 }

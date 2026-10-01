@@ -32,6 +32,8 @@ export async function callRapidApi(host: string, path: string, params: Record<st
 
   if (res.status === 429) fail(429, remaining === 0 ? 'quota' : 'rateLimit', usage)
   if (res.status === 401 || res.status === 403) fail(502, 'notSubscribed', { reached: false })
+  // そのほかの 4xx は条件の誤りで、時間をおいても結果は変わらない（失敗も1回に数えられる。設計書 §10.5）
+  if (res.status >= 400 && res.status < 500) fail(400, 'badRequest', usage)
   if (!res.ok) fail(502, 'upstream', usage)
 
   const body = (await res.json().catch(() => null)) as Record<string, unknown> | null

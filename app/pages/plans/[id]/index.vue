@@ -1,41 +1,59 @@
 <script setup lang="ts">
 // プランの閲覧（仕様書 §5）。保存したときの計算結果だけを表示し、NAVITIME は呼ばない
 import type { MapPoint, MapRoute } from '~/types/map'
+import type { Leg, Place } from '~/types/plan'
 import { datePart, formatDateJa, formatDistance, formatDuration, formatTimestamp, formatYen, timePart } from '~/utils/datetime'
-import { STOP_KIND_ICONS } from '~/utils/legs'
-import { legTimelineItems, type TimelineItem } from '~/utils/planSummary'
+import { sideOf, STOP_KIND_ICONS } from '~/utils/legs'
+import { stayLabel, timelineItems, type TimelineItem } from '~/utils/planSummary'
 import { deletePlan, findPlan } from '~/utils/planStore'
 
 const route = useRoute()
 const plan = findPlan(String(route.params.id))
 useHead({ title: plan ? `${plan.name} | えんメイト` : 'プランが見つかりませんでした | えんメイト' })
 
-const results = (plan?.legs ?? []).flatMap((leg) => (leg.result ? [leg.result] : []))
-const totals = {
-  driveMinutes: results.reduce((sum, r) => sum + r.driveMinutes, 0),
-  distanceMeters: results.reduce((sum, r) => sum + r.distanceMeters, 0),
-  tollYen: results.reduce((sum, r) => sum + r.tollYen, 0),
+const computedLegs = (plan?.legs ?? []).filter((leg) => leg.result)
+const sum = (legs: Leg[]) => ({
+  driveMinutes: legs.reduce((total, leg) => total + leg.result!.driveMinutes, 0),
+  distanceMeters: legs.reduce((total, leg) => total + leg.result!.distanceMeters, 0),
+  tollYen: legs.reduce((total, leg) => total + leg.result!.tollYen, 0),
+})
+const totals = sum(computedLegs)
+
+// 「行き」「帰り」の2枚のカード（仕様書 §5.2）。前泊・後泊で区間が増えても方向ごとに1枚にまとめ、
+// 最初の出発と最後の到着を出す。押すとその方向のルートを地図に出す（開いたときは行き）
+type Side = 'outbound' | 'return'
+const directions = (['outbound', 'return'] as Side[]).flatMap((side) => {
+  const legs = computedLegs.filter((leg) => sideOf(leg.id) === side)
+  const first = legs[0]
+  const last = legs[legs.length - 1]
+  return first && last ? [{ side, label: side === 'outbound' ? '行き' : '帰り', first, last, ...sum(legs) }] : []
+})
+const selected = ref<Side | null>(directions[0]?.side ?? null)
+const openTimeline = ref<Record<string, boolean>>({})
+const shownLegs = computed(() => computedLegs.filter((leg) => selected.value === null || sideOf(leg.id) === selected.value))
+
+// 宿泊先（仕様書 §5.4）。泊まる順に出し、前日と同じ宿に2泊するときは1つにまとめる
+const hotels: { place: Place; nights: string }[] = []
+for (const [place, night] of [
+  ...(plan?.hotelsBefore ?? []).map((h) => [h, '前日'] as const),
+  ...(plan?.hotelsAfter ?? []).map((h) => [h, '試合の夜'] as const),
+]) {
+  const same = hotels.find((h) => h.place.lat === place.lat && h.place.lon === place.lon)
+  if (same) same.nights += `・${night}`
+  else hotels.push({ place, nights: night })
 }
 
-// 行き・帰りのカード。押すとその方向のルートを地図に出す（開いたときは行き）
-const directions = (plan?.legs ?? []).filter((leg) => leg.result)
-const selected = ref<string | null>(directions[0]?.id ?? null)
-const openTimeline = ref<Record<string, boolean>>({})
-
-const mapRoutes = computed<MapRoute[]>(() =>
-  directions
-    .filter((leg) => selected.value === null || leg.id === selected.value)
-    .map((leg) => ({ id: leg.id, direction: leg.timeRule === 'arriveBy' ? 'outbound' : 'return', shape: leg.result!.shape })),
-)
+const mapRoutes = computed<MapRoute[]>(() => shownLegs.value.map((leg) => ({ id: leg.id, direction: sideOf(leg.id), shape: leg.result!.shape })))
 // 休憩候補のピンは描かない（仕様書 §5.5）
 const mapPoints = computed<MapPoint[]>(() =>
   plan
     ? [
         { kind: 'home', place: plan.home },
         { kind: 'venue', place: plan.venue },
-        ...directions
-          .filter((leg) => selected.value === null || leg.id === selected.value)
-          .flatMap((leg) => leg.stops.map((stop, i) => ({ kind: 'stop' as const, place: stop.place, icon: STOP_KIND_ICONS[stop.kind], label: String(i + 1) }))),
+        ...hotels.map((h) => ({ kind: 'hotel' as const, place: h.place })),
+        ...shownLegs.value.flatMap((leg) =>
+          leg.stops.map((stop, i) => ({ kind: 'stop' as const, place: stop.place, icon: STOP_KIND_ICONS[stop.kind], label: String(i + 1) })),
+        ),
       ]
     : [],
 )
@@ -71,7 +89,7 @@ async function remove() {
   <SplitLayout v-else>
     <div class="stack">
       <header>
-        <p class="muted">{{ formatDateJa(plan.matchDate) }}・日帰り</p>
+        <p class="muted">{{ formatDateJa(plan.matchDate) }}・{{ stayLabel(plan) }}</p>
         <h1 class="page-title">{{ plan.name }}</h1>
         <p>{{ plan.home.name }} → {{ plan.venue.name }}</p>
       </header>
@@ -102,34 +120,34 @@ async function remove() {
       </p>
 
       <!-- 行き・帰りのカード（仕様書 §5.2） -->
-      <section v-for="leg in directions" :key="leg.id" class="direction card" :class="[`direction-${leg.id}`, { active: selected === leg.id }]">
-        <button type="button" class="direction-main" :aria-pressed="selected === leg.id" @click="selected = leg.id">
+      <section v-for="d in directions" :key="d.side" class="direction card" :class="[`direction-${d.side}`, { active: selected === d.side }]">
+        <button type="button" class="direction-main" :aria-pressed="selected === d.side" @click="selected = d.side">
           <span class="direction-head">
-            <span class="direction-label">{{ leg.label }}</span>
-            <span class="map-label">{{ selected === leg.id ? '🗺 地図に表示中' : '🗺 押すと地図に表示' }}</span>
+            <span class="direction-label">{{ d.label }}</span>
+            <span class="map-label">{{ selected === d.side ? '🗺 地図に表示中' : '🗺 押すと地図に表示' }}</span>
           </span>
           <span class="direction-times">
             <span>
-              <span class="muted">{{ formatDateJa(datePart(leg.result!.departAt)) }} {{ leg.from.name }} を出発</span>
-              <strong>{{ timePart(leg.result!.departAt) }}</strong>
+              <span class="muted">{{ formatDateJa(datePart(d.first.result!.departAt)) }} {{ d.first.from.name }} を出発</span>
+              <strong>{{ timePart(d.first.result!.departAt) }}</strong>
             </span>
             <span class="arrow" aria-hidden="true">→</span>
             <span>
-              <span class="muted">{{ formatDateJa(datePart(leg.result!.arriveAt)) }} {{ leg.to.name }} に到着</span>
-              <strong>{{ timePart(leg.result!.arriveAt) }}</strong>
+              <span class="muted">{{ formatDateJa(datePart(d.last.result!.arriveAt)) }} {{ d.last.to.name }} に到着</span>
+              <strong>{{ timePart(d.last.result!.arriveAt) }}</strong>
             </span>
           </span>
           <span class="muted">
-            運転 {{ formatDuration(leg.result!.driveMinutes) }}・{{ formatDistance(leg.result!.distanceMeters) }}
-            <template v-if="leg.result!.tollYen > 0">・高速 {{ formatYen(leg.result!.tollYen) }}</template>
+            運転 {{ formatDuration(d.driveMinutes) }}・{{ formatDistance(d.distanceMeters) }}
+            <template v-if="d.tollYen > 0">・高速 {{ formatYen(d.tollYen) }}</template>
           </span>
         </button>
 
-        <button type="button" class="btn btn-small timeline-toggle" @click="openTimeline[leg.id] = !openTimeline[leg.id]">
-          {{ openTimeline[leg.id] ? '▲ タイムラインを閉じる' : '▼ 詳しいタイムラインを見る' }}
+        <button type="button" class="btn btn-small timeline-toggle" @click="openTimeline[d.side] = !openTimeline[d.side]">
+          {{ openTimeline[d.side] ? '▲ タイムラインを閉じる' : '▼ 詳しいタイムラインを見る' }}
         </button>
-        <div v-if="openTimeline[leg.id]" class="timeline">
-          <div v-for="group in byDate(legTimelineItems(plan, leg.id))" :key="group.date">
+        <div v-if="openTimeline[d.side]" class="timeline">
+          <div v-for="group in byDate(timelineItems(plan, d.side))" :key="group.date">
             <p class="timeline-date">{{ formatDateJa(group.date) }}</p>
             <ol class="timeline-list">
               <li v-for="(item, i) in group.items" :key="i" class="timeline-item">
@@ -140,11 +158,26 @@ async function remove() {
                   ⭐ {{ item.name }} に立ち寄り（〜{{ timePart(item.until!) }}）
                   <a v-if="item.spotCode" :href="spotUrl(item.spotCode)" target="_blank" rel="noopener">詳細↗</a>
                 </span>
-                <span v-else>📍 {{ item.name }} に到着</span>
+                <span v-else>
+                  📍 {{ item.name }} に到着<template v-if="item.hotel">（宿泊）</template>
+                  <a v-if="item.hotel && item.spotCode" :href="spotUrl(item.spotCode)" target="_blank" rel="noopener">詳細↗</a>
+                </span>
               </li>
             </ol>
           </div>
         </div>
+      </section>
+
+      <!-- 宿泊先（仕様書 §5.4）。予約リンクはあとで作る -->
+      <section v-if="hotels.length > 0" class="card stack">
+        <h2 class="sub-title">宿泊先</h2>
+        <ul class="hotels">
+          <li v-for="h in hotels" :key="`${h.place.lat},${h.place.lon}`">
+            <span class="hotel-nights">{{ h.nights }}</span>
+            <strong>{{ h.place.name }}</strong>
+            <a v-if="h.place.spotCode" :href="spotUrl(h.place.spotCode)" target="_blank" rel="noopener">NAVITIMEで詳しく見る↗</a>
+          </li>
+        </ul>
       </section>
 
       <NuxtLink to="/" class="btn">← 保存したプランの一覧へ戻る</NuxtLink>
@@ -287,6 +320,29 @@ async function remove() {
   width: 3.2em;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.sub-title {
+  font-size: 1.05rem;
+}
+
+.hotels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hotels li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 4px 0;
+}
+
+.hotel-nights {
+  font-size: 0.875rem;
+  color: var(--color-muted);
 }
 
 .map-box {

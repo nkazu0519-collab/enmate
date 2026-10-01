@@ -16,7 +16,8 @@ export function readCache<T>(key: string, maxAgeMs: number, now = Date.now(), st
   }
 }
 
-function clearCache(store: Storage): void {
+// 使い回し用のデータをすべて消す（プランは消さない）
+export function clearCache(store: Storage): void {
   const keys: string[] = []
   for (let i = 0; i < store.length; i++) {
     const key = store.key(i)

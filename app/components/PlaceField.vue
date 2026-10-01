@@ -75,14 +75,25 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
       </div>
       <p class="muted">「{{ searched }}」の検索結果（{{ results.length }}件）です</p>
       <ul class="results">
-        <li v-for="place in shown" :key="place.spotCode ?? `${place.lat},${place.lon}`" class="result">
+        <!-- カードを押して選ぶ（本人の修正、2026-10-01。「ここにする」のボタンはなくした）。キーボードでは Enter・スペースで選ぶ -->
+        <li
+          v-for="place in shown"
+          :key="place.spotCode ?? `${place.lat},${place.lon}`"
+          class="result"
+          :class="{ 'result-choosable': !isSelected(place) }"
+          :role="isSelected(place) ? undefined : 'button'"
+          :tabindex="isSelected(place) ? undefined : 0"
+          :aria-label="isSelected(place) ? undefined : `${place.name}を${props.label}にする`"
+          @click="!isSelected(place) && choose(place)"
+          @keydown.enter.prevent="!isSelected(place) && choose(place)"
+          @keydown.space.prevent="!isSelected(place) && choose(place)"
+        >
           <div class="result-body">
             <p class="result-name">{{ place.name }}</p>
             <p class="muted">{{ [place.category, place.address].filter(Boolean).join('・') }}</p>
-            <a v-if="place.spotCode" class="result-link" :href="spotUrl(place.spotCode)" target="_blank" rel="noopener">NAVITIMEで詳しく見る↗</a>
+            <a v-if="place.spotCode" class="result-link" :href="spotUrl(place.spotCode)" target="_blank" rel="noopener" @click.stop @keydown.enter.stop @keydown.space.stop>NAVITIMEで詳しく見る↗</a>
           </div>
-          <button v-if="isSelected(place)" type="button" class="btn btn-small" disabled>✓ {{ props.label }}に設定済み</button>
-          <button v-else type="button" class="btn btn-small btn-primary" @click="choose(place)">ここにする</button>
+          <span v-if="isSelected(place)" class="muted">✓ {{ props.label }}に設定済み</span>
         </li>
       </ul>
       <button v-if="results.length > FIRST_COUNT && !showAll" type="button" class="btn btn-block" @click="showAll = true">
@@ -155,6 +166,22 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
 
 .result + .result {
   border-top: 1px solid var(--color-border);
+}
+
+.result-choosable {
+  margin: 0 -8px;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.result-choosable:hover {
+  background: var(--color-primary-soft);
+}
+
+.result-choosable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .result-body {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { searchPlaces } from '../app/services/place'
+import { searchNearby, searchPlaces } from '../app/services/place'
 import { FakeStorage } from './helpers'
 
 // サーバー側の中継を呼ぶ部分だけを差し替えて、何回呼んだかを数える
@@ -60,5 +60,35 @@ describe('場所の検索', () => {
     callApi.mockRejectedValueOnce(new Error('通信に失敗しました'))
     await expect(searchPlaces('新潟駅')).rejects.toThrow('通信に失敗しました')
     await expect(searchPlaces('新潟駅')).resolves.toHaveLength(1)
+  })
+})
+
+describe('会場周辺の宿泊先', () => {
+  const center = { name: '長野Uスタジアム', lat: 36.5806, lon: 138.1672 }
+  const spot = (code: string, name: string, categoryCode: string, distance: number) => ({
+    code,
+    name,
+    coord: { lat: 36.6, lon: 138.2 },
+    categories: [{ code: categoryCode, name: '' }],
+    distance,
+  })
+
+  it('E29: ホテル・旅館などだけを近い順に残し、日帰りの温泉とファッションホテルは除く', async () => {
+    callApi.mockResolvedValue({
+      items: [
+        spot('h1', 'ビジネスホテル', '0608001002', 800),
+        spot('h2', '日帰り温泉', '0604001001', 900),
+        spot('h3', 'ファッションホテル', '0608002002', 1000),
+        spot('h4', '温泉旅館', '0604002001', 1200),
+        spot('h5', 'ペンション', '0605001001', 2500),
+      ],
+    })
+    const hotels = await searchNearby('hotel', center)
+    expect(hotels.map((h) => [h.name, h.distanceMeters])).toEqual([
+      ['ビジネスホテル', 800],
+      ['温泉旅館', 1200],
+      ['ペンション', 2500],
+    ])
+    expect(callApi).toHaveBeenCalledWith('spot', '/api/spot-nearby', { kind: 'hotel', coord: '36.58060,138.16720' })
   })
 })

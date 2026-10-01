@@ -2,7 +2,7 @@
 // RapidAPI が応答ヘッダーで返す残り回数を優先し、なければこのブラウザで数えた回数を使う。
 import { browserStore } from './storage'
 
-export type ApiName = 'route' | 'spot'
+export type ApiName = 'route' | 'spot' | 'geocoding'
 
 type UsageRecord = { month: string; counted: number; remaining: number | null; limit: number | null }
 
@@ -10,7 +10,7 @@ export type Usage = { used: number; limit: number | null; nearLimit: boolean }
 
 const KEY = 'enmate:usage'
 // 応答ヘッダーをまだ受け取っていないときの上限。ルート検索は 500 と確認済み（2026-10-01）
-const KNOWN_LIMITS: Record<ApiName, number | null> = { route: 500, spot: null }
+const KNOWN_LIMITS: Record<ApiName, number | null> = { route: 500, spot: null, geocoding: null }
 const WARN_RATIO = 0.8
 
 function monthOf(now: Date): string {
@@ -19,7 +19,9 @@ function monthOf(now: Date): string {
 
 function readAll(store: Storage | null): Partial<Record<ApiName, UsageRecord>> {
   try {
-    return JSON.parse(store?.getItem(KEY) ?? '{}') ?? {}
+    const parsed: unknown = JSON.parse(store?.getItem(KEY) ?? '{}')
+    // 壊れていて（文字列・数・配列など）書き足せない形なら、なかったものとして数え直す
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
   } catch {
     return {}
   }

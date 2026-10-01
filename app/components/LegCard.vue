@@ -3,7 +3,7 @@
 // 出発・到着の時刻、概要、立ち寄り先の一覧（§4.5）、おすすめ休憩地（§4.8）を出す
 import type { Leg, LegResult, Stop, StopKind } from '~/types/plan'
 import { datePart, formatDateJa, formatDistance, formatDuration, formatYen, timePart } from '~/utils/datetime'
-import { MAX_STAY_MINUTES, STAY_STEP_MINUTES, STOP_KIND_ICONS, STOP_KIND_LABELS, type LegStatus } from '~/utils/legs'
+import { MAX_STAY_MINUTES, sideOf, STAY_STEP_MINUTES, STOP_KIND_ICONS, STOP_KIND_LABELS, type LegStatus } from '~/utils/legs'
 import type { LongStretch, RestSuggestion } from '~/utils/rest'
 
 const props = defineProps<{
@@ -45,7 +45,7 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
 </script>
 
 <template>
-  <section class="card leg" :class="[`leg-${props.leg.id}`, { 'leg-stale': props.status === 'stale' }]">
+  <section class="card leg" :class="[`leg-${sideOf(props.leg.id)}`, { 'leg-stale': props.status === 'stale' }]">
     <header class="leg-header">
       <h3 class="leg-title">
         <span class="leg-number">{{ props.number }}</span>
@@ -82,7 +82,11 @@ const spotUrl = (code: string) => `https://www.navitime.co.jp/poi?spt=${encodeUR
         <template v-if="props.result.tollYen > 0">・高速 {{ formatYen(props.result.tollYen) }}</template>
       </p>
     </template>
-    <p v-else-if="!props.error && !props.loading" class="muted">まだ計算していません。</p>
+    <!-- 失敗したときも、同じ条件でもう一度押せるようにする（通信の失敗や混み合いは、押し直せば通ることがある） -->
+    <p v-else-if="!props.loading" class="stale-note">
+      <span class="muted">{{ props.error ? '同じ条件で、もう一度計算できます。' : 'まだ計算していません。' }}</span>
+      <button type="button" class="btn btn-small btn-primary" @click="emit('recalculate')">{{ props.error ? 'もう一度計算する' : '計算する' }}</button>
+    </p>
 
     <!-- 立ち寄り先（仕様書 §4.5） -->
     <section class="stops">

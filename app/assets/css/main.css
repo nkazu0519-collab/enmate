@@ -182,3 +182,102 @@ select {
   margin: 0;
   padding-left: 1.2em;
 }
+
+/* 立ち寄り先の追加・宿泊先を選ぶ画面（BottomSheet の中）のタブと候補の一覧 */
+.tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  flex: none;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  font-weight: 600;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.tab[aria-selected='true'] {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-primary-dark);
+}
+
+/* 都道府県や、探す範囲・種類を切り替えるボタン */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-dark);
+  font-weight: 600;
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.search-row {
+  display: flex;
+  gap: 8px;
+}
+
+.search-row .btn {
+  flex-shrink: 0;
+}
+
+.results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.result + .result {
+  border-top: 1px solid var(--color-border);
+}
+
+.result-body {
+  min-width: 0;
+}
+
+.result-name {
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.result-link {
+  font-size: 0.875rem;
+}
+
+.result .btn {
+  flex: none;
+}
